@@ -83,6 +83,8 @@ function outputWorld(t, { stdout = OUT, stderr = ERR, exit = 0, fault, route = '
     if (command !== realHost.ps) return '';
     const columns = args[args.indexOf('-o') + 1];
     if (columns === 'lstart=') return 'Thu Nov  5 12:00:00 2026\n';
+    // Whole-table rows follow ps(1), with each controlled child leading its own group.
+    if (args.includes('-A')) return [...children.values()].filter((child) => child.exitCode === null && child.signalCode === null).map(({ pid }) => `${pid} 1 ${pid} Thu Nov  5 12:00:00 2026`).join('\n');
     const selected = args[args.indexOf(args.includes('-g') ? '-g' : '-p') + 1]?.split(',') ?? [];
     return [...children.values()].filter((child) => selected.includes(String(child.pid)) && child.exitCode === null && child.signalCode === null)
       .map((child) => columns.split(',').map((column) => ({ 'pid=': child.pid, 'stat=': child.stopped ? 'T' : 'S',
@@ -91,7 +93,7 @@ function outputWorld(t, { stdout = OUT, stderr = ERR, exit = 0, fault, route = '
   const host = {
     ...realHost, clock: { ...clock, pause: async () => {}, schedule(done, delay) {
       const handle = clock.schedule(done, delay);
-      if (timeout && delay === 1000) queueMicrotask(() => clock.advance(clock.now() + delay));
+      if (timeout && delay === 1000 && !done.tracker) queueMicrotask(() => clock.advance(clock.now() + delay));
       return handle;
     } },
     signal(pid, name) {

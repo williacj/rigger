@@ -46,6 +46,8 @@ function processHost(clock, processesGit, startFailure) {
     if (tool === '/scripted/lsof') return '';
     const format = args[args.indexOf('-o') + 1];
     if (format === 'lstart=') return 'Sun Nov  1 21:00:00 2026\n';
+    // ps(1)'s whole-table columns; each controlled child is its own group's leader.
+    if (args.includes('-A')) return [...children].filter(([, child]) => child.exitCode === null && child.signalCode === null).map(([pid]) => `${pid} 1 ${pid} Sun Nov  1 21:00:00 2026`).join('\n');
     const target = args[args.indexOf(args.includes('-g') ? '-g' : '-p') + 1];
     const selected = [...children].filter(([pid, child]) => target.split(',').includes(String(pid)) && child.exitCode === null && child.signalCode === null);
     return selected.map(([pid, child]) => format.split(',').map((column) => ({
