@@ -24,6 +24,8 @@ import { stubCodex } from './stub-claude.mjs';
 import { ADAPTERS } from '../src/substrate/providers/adapters.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 import { readRunner } from '../src/substrate/forge/runners.mjs';
+import { ghVersion, versionLine } from '../src/cli/doctor.mjs';
+import { GH_MINIMUM } from '../src/substrate/forge/read.mjs';
 import { repositoryReads } from '../src/substrate/forge/read.mjs';
 import { seedRepository } from './fake-gh.mjs';
 
@@ -259,6 +261,10 @@ test('a package.json the check cannot read is reported as unread, and never thro
 const RECORDED = {
   ghIn: { status: 0, stdout: 'github.com\n  ✓ Logged in to github.com account williacj (keyring)\n', stderr: '' },
   ghOut: { status: 1, stdout: '', stderr: 'You are not logged into any GitHub hosts. To log in, run: gh auth login\n' },
+  // `gh --version` as gh 2.103.3 answered it on macOS on 2026-11-21 (#1448, "Measured").
+  ghVersion: { status: 0, stdout: 'gh version 2.103.3 (2026-10-26)\nhttps://github.com/cli/cli/releases/tag/v2.103.3\n', stderr: '' },
+  // The same answer with the release #1448's row V6 names, which is below the minimum.
+  ghBelow: { status: 0, stdout: 'gh version 2.96.0 (2026-10-26)\nhttps://github.com/cli/cli/releases/tag/v2.96.0\n', stderr: '' },
   agentIn: { status: 0, stdout: '{\n  "loggedIn": true,\n  "authMethod": "claude.ai"\n}\n', stderr: '' },
   agentOut: { status: 1, stdout: '{\n  "loggedIn": false,\n  "authMethod": "none"\n}\n', stderr: '' },
 };
@@ -326,6 +332,7 @@ function answeringEach(answers) {
       if (policy !== null) return policy;
     }
     if (command === 'gh' && args[0] === 'api') return args[3].includes('fields(') ? STARTER_FIELDS() : UNSHARED_BOARD;
+    if (command === 'gh' && args[0] === '--version') return answers.ghVersion ?? RECORDED.ghVersion;
     assert.ok(Object.hasOwn(answers, command), `the test recorded no answer for \`${command}\``);
     // A failure is how L0's process adapter answers a command it could not start.
     if (answers[command] instanceof Error) throw answers[command];
@@ -424,6 +431,85 @@ test('an authority this host cannot run at all is reported as unasked, never as 
     assert.equal(said.ok, null, said.detail);
     assert.match(said.detail, /could not be run|not there|no such/i, said.detail);
   }
+});
+
+/** What gh prints for the release `version`, in the shape `RECORDED.ghVersion` was measured in. */
+const ghPrinting = (version) => ({ status: 0, stdout: `gh version ${version} (2026-10-26)\nhttps://github.com/cli/cli/releases/tag/v${version}\n`, stderr: '' });
+
+/** A version read as `readGhVersion` hands one on (its documented plain data), for gh's `first` line. */
+const readOf = (first, version, fields = {}) => ({ status: 0, timedOut: false, timeout: 60_000, line: first, version, ...fields });
+
+test("the gh version line's detail names what #1448's version boundary asks of each read, on one line, and a gh not run, failed or hung is not ok", async () => {
+  // Each row of #1448's "The version boundary" table, as the read the forge adapter hands doctor,
+  // with the text its "Its detail names" column gives, written out by hand from the card. This
+  // test owns how doctor renders a read: the defects it catches are a detail that names neither
+  // the version gh reported nor the minimum it fell short of, a gh that could not be run, failed
+  // or hung reported as a pass (V1 to V3), and a detail that carries a line separator of gh's own
+  // first line (CR, U+2028, U+2029) unescaped into a report that is one line per check. How gh's
+  // answer is parsed and compared is `test/gh-version.test.mjs`'s to prove, so the reads below
+  // are given already parsed and the verdicts of V4 to V12 are left to that test.
+  const unstarted = await notStarted();
+  const rows = [
+    ['V1', await ghVersion({ ask: () => Promise.reject(unstarted) }), null, ['could not be run']],
+    ['V2', versionLine(readOf('', null, { status: 1 })), null, ['exited 1']],
+    ['V3', versionLine(readOf('', null, { status: null, timedOut: true })), null, ['60000 ms']],
+    ['V4', versionLine(readOf('gh version DEV', null)), undefined, ['gh version DEV']],
+    ['V4', versionLine(readOf('', null)), undefined, ['``']],
+    ['V4', versionLine(readOf('To get started with GitHub CLI, please run:  gh auth login', null)), undefined, ['To get started with GitHub CLI, please run:  gh auth login']],
+    // A first line carrying a separator other than LF, which the read keeps inside the line.
+    ['V4', versionLine(readOf('gh version DEV\rextra detail', null)), undefined, ['gh version DEV']],
+    ['V4', versionLine(readOf('gh version DEV\u2028extra detail', null)), undefined, ['gh version DEV']],
+    ['V4', versionLine(readOf('gh version DEV\u2029extra detail', null)), undefined, ['gh version DEV']],
+    ['V5', versionLine(readOf('gh version 2.97.0 (2026-10-26)', '2.97.0')), undefined, ['2.97.0']],
+    ['V6', versionLine(readOf('gh version 2.96.0 (2026-10-26)', '2.96.0')), undefined, ['2.96.0', '2.97.0']],
+    ['V6', versionLine(readOf('gh version 2.96.9 (2026-10-26)', '2.96.9')), undefined, ['2.96.9', '2.97.0']],
+    ['V7', versionLine(readOf('gh version 2.9.0 (2026-10-26)', '2.9.0')), undefined, ['2.9.0', '2.97.0']],
+    ['V7', versionLine(readOf('gh version 1.99.0 (2026-10-26)', '1.99.0')), undefined, ['1.99.0', '2.97.0']],
+    ['V8', versionLine(readOf('gh version 2.97.1 (2026-10-26)', '2.97.1')), undefined, ['2.97.1']],
+    ['V9', versionLine(readOf('gh version 2.103.3 (2026-10-26)', '2.103.3')), undefined, ['2.103.3']],
+    ['V10', versionLine(readOf('gh version 3.0.0 (2026-10-26)', '3.0.0')), undefined, ['3.0.0']],
+    ['V11', versionLine(readOf('gh version 2.97.0-rc.1', null)), undefined, ['gh version 2.97.0-rc.1']],
+    ['V11', versionLine(readOf('gh version 2.98.0-rc.1', null)), undefined, ['gh version 2.98.0-rc.1']],
+    ['V12', versionLine(readOf('gh version 2.97.1 (2026-10-26)', '2.97.1')), undefined, ['2.97.1']],
+  ];
+  for (const [row, line, verdict, named] of rows) {
+    assert.equal(line.name, 'gh version', row);
+    if (verdict !== undefined) assert.equal(line.ok, verdict, `${row}: ${line.detail}`);
+    for (const text of named) assert.ok(line.detail.includes(text), `${row}: the detail does not name ${text}: ${line.detail}`);
+    assert.doesNotMatch(line.detail, /[\r\n\u2028\u2029]/, `${row}: ${line.detail}`);
+  }
+});
+
+test("the gh version line comes once, after the Node line and before the gh sign-in line, and fails doctor's status below the minimum", async () => {
+  // #1448: gh 2.96.0 fails the whole run, and 2.97.0 passes it where every other check passes.
+  // The defects this catches: the line missing or doubled, placed where a consumer reading the
+  // prerequisites in order would not look for it, or a verdict that leaves the exit status alone.
+  const good = checked(starter());
+  const refused = checked(starter().replace(/^\s*repo:.*$/m, ''));
+  const below = await doctor(against(good, { gh: RECORDED.ghIn, ghVersion: ghPrinting('2.96.0'), claude: RECORDED.agentIn }));
+  const minimum = await doctor(against(good, { gh: RECORDED.ghIn, ghVersion: ghPrinting('2.97.0'), claude: RECORDED.agentIn }));
+  const unread = await doctor(against(refused, { gh: RECORDED.ghIn, claude: RECORDED.agentIn, codex: CODEX.signedIn }));
+
+  assert.notEqual(below.code, 0, below.text);
+  assert.match(linesOf(below.text, 'gh version')[0], /^\s*failed\s/, below.text);
+  assert.equal(minimum.code, 0, minimum.text);
+  for (const ran of [below, minimum, unread]) {
+    assert.equal(linesOf(ran.text, 'gh version').length, 1, ran.text);
+    const names = namesIn(ran.text);
+    const at = names.indexOf('gh version');
+    assert.deepEqual(names.slice(at - 1, at + 2), ['Node version', 'gh version', 'gh authentication'], ran.text);
+  }
+});
+
+test('README.md names the exact minimum gh version the forge adapter exports', () => {
+  // The README owns what a consumer is told to install, and the forge adapter owns what doctor
+  // compares against. The defect this catches is one changed without the other, or the minimum
+  // missing from the README. Only the version string is sought, as a whole version not inside a
+  // longer one, so the README's layout changes nothing here (owner ruling M8-U101); that it
+  // stands in "Prerequisites" as "or later" is read by a judge.
+  const readme = readFileSync(join(root, 'README.md'), 'utf8');
+  const exact = new RegExp(`(?<![\\d.])${GH_MINIMUM.replaceAll('.', '\\.')}(?!\\.?\\d)`);
+  assert.match(readme, exact, `README.md does not name gh ${GH_MINIMUM}, the minimum src/substrate/forge/read.mjs exports`);
 });
 
 test('the agent CLI check answers the `loggedIn` a recorded answer states, and asks every provider by name', async () => {
@@ -566,7 +652,7 @@ test('doctor prints its report when consumerConfig refuses a getter in the confi
     const config = checkLines(printed).find((line) => line.includes('config validity'));
     assert.match(config, new RegExp(`failed.*${reason}`));
     assert.notEqual(ran.status, 0, printed);
-    assert.deepEqual(gh.calls(), ['auth status']);
+    assert.deepEqual(gh.calls(), ['--version', 'auth status']);
   }
 });
 
@@ -577,7 +663,7 @@ test('doctor prints its report when consumerConfig refuses a getter in the confi
  * agrees with whatever the report says, a report of nothing included.
  */
 const CHECKED = [
-  'Node version', 'gh authentication', 'agent CLI authentication', 'config validity',
+  'Node version', 'gh version', 'gh authentication', 'agent CLI authentication', 'config validity',
   'board reachability',
   'board column ready', 'board column coding', 'board column review', 'board column owner', 'board column done',
   'board priority',
@@ -587,7 +673,7 @@ const CHECKED = [
 ];
 
 /** The checks `doctor` reports where the config cannot be read or is refused, written out by hand. */
-const UNREAD = ['Node version', 'gh authentication', 'agent CLI authentication', 'config validity', 'board checks', 'gate check required', 'admission'];
+const UNREAD = ['Node version', 'gh version', 'gh authentication', 'agent CLI authentication', 'config validity', 'board checks', 'gate check required', 'admission'];
 
 const NO_LAUNCHD = { platform: 'darwin', readLaunchdJob: async () => null };
 
@@ -866,7 +952,9 @@ test('the command runs the checks in the repository it was called in, from outsi
   // The stand-in is asked whether gh is signed in, and then for the board's items, which it
   // answers with gh's sign-in text: the board-sharing line fails on that, and the run exits
   // non-zero, which the last assertion reads off the report.
-  const [auth, ...reads] = gh.calls();
+  // Before either, it is asked `gh --version`, which it answers with the same sign-in text.
+  const [version, auth, ...reads] = gh.calls();
+  assert.equal(version, '--version', printed);
   assert.equal(auth, 'auth status', printed);
   assert.ok(reads.length > 0, `the board was never read:\n${printed}`);
   for (const read of reads) assert.ok(read.startsWith('api graphql -f query=query ') || /^api repos\/\S+ -X GET$/.test(read), read);
@@ -925,6 +1013,7 @@ async function onFakeBoard(board, { source = starter(), project = STARTER_BOARD.
     // A config Rigger refuses has every adapter asked (ruling 18 on #467), Codex among them.
     if (command === 'codex') return CODEX.signedIn;
     if (command === 'gh' && auth && args[0] === 'auth') return RECORDED.ghIn;
+    if (command === 'gh' && args[0] === '--version') return RECORDED.ghVersion;
     if (command === 'gh' && args[0] === 'api') {
       const gate = gateAnswer(args);
       if (gate !== null) return gate;
@@ -1050,7 +1139,7 @@ test('the checks doctor names are the four it named at 434b48b, the board-sharin
   // Written out by hand: the four names `doctor` printed at 434b48b, the one #289 adds, and the
   // board lines #236 adds for the starter config's five columns, and for a config it refuses.
   const expected = [
-    'Node version', 'gh authentication', 'agent CLI authentication', 'config validity',
+    'Node version', 'gh version', 'gh authentication', 'agent CLI authentication', 'config validity',
     'board sharing',
     'board reachability',
     'board column ready', 'board column coding', 'board column review', 'board column owner', 'board column done',
@@ -2232,7 +2321,7 @@ test('doctor fails the admission line where admission is a file, naming the dire
 // proves R-SCHED-17
 test('under a closed admission with every other check failing, doctor reports it closed and its heading and exit are those with the directory absent', async () => {
   const target = checked(starter().replace(/^\s*repo:.*$/m, ''));
-  const options = { ...against(target, { gh: RECORDED.ghOut, claude: RECORDED.agentOut, codex: CODEX.signedOut }), packageRoot: packageDeclaring('>=999') };
+  const options = { ...against(target, { gh: RECORDED.ghOut, ghVersion: RECORDED.ghBelow, claude: RECORDED.agentOut, codex: CODEX.signedOut }), packageRoot: packageDeclaring('>=999') };
   const { absent, seeded } = await absentThen(target, (state) => seed(state, 'owner-a1.json', closerText({ reason: 'owner pause' })), options);
 
   assert.ok(admissionLine(seeded.text).endsWith(`admission: ${OWNER_WORDS}`), seeded.text);

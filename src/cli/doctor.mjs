@@ -7,7 +7,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { types } from 'node:util';
 
 import { gitEnvironment } from '../substrate/git-environment.mjs';
-import { boardOf, readSide } from '../substrate/forge/read.mjs';
+import { GH_MINIMUM, boardOf, readGhVersion, readSide } from '../substrate/forge/read.mjs';
 import { COLUMNS, FORGE_TIMEOUT, readRunner } from '../substrate/forge/runners.mjs';
 import { EVENT_REFUSED, NOT_STARTED, runCommand } from '../substrate/process.mjs';
 import { ADAPTERS } from '../substrate/providers/adapters.mjs';
@@ -22,8 +22,8 @@ import { loadedJob } from '../substrate/launchd.mjs';
 /**
  * Runs a command through L0's process adapter and hands back what it answered: its exit code as
  * `status`, its output as text, and whether the timeout ended it. This is every authority the
- * guard, `doctor` and `init` ask but the forge, which `ghAuth` asks through the forge adapter's
- * read runner. The command runs in a group of its own, ended at `timeout`, and every process it
+ * guard, `doctor` and `init` ask but the forge, which `ghVersion` and `ghAuth` ask through the
+ * forge adapter's read runner. The command runs in a group of its own, ended at `timeout`, and every process it
  * leaves is killed and recorded through `emitter`. A command that never started, and a kill the sink
  * refused, reject as the adapter rejects, each failure's `code` naming which.
  *
@@ -288,6 +288,38 @@ export async function ghAuth({ ask, emitter } = {}) {
     return { name, ok: null, detail: `\`gh auth status\` could not be run here: ${oneLine(failure.message)}` };
   }
   return { name, ok: said.status === 0, detail: `\`gh auth status\` exited ${said.status}: ${firstLine(said)}` };
+}
+
+/**
+ * Whether the installed gh is a release at or above the minimum Rigger requires, which is the
+ * forge adapter's reading of `gh --version` reported by `versionLine`.
+ *
+ * The read goes through the forge adapter's read runner, as `ghAuth`'s does, with `emitter` for
+ * L0's kills, and `ask` stands in for the runner's spawn in tests.
+ */
+export async function ghVersion({ ask, emitter } = {}) {
+  try {
+    return versionLine(await readGhVersion({ send: ask, emitter }));
+  } catch (failure) {
+    if (failure.code !== NOT_STARTED) throw failure;
+    return versionLine({ unstarted: oneLine(failure.message) });
+  }
+}
+
+/**
+ * The `gh version` line for a version read, `readGhVersion`'s plain data or `{ unstarted }` naming
+ * why gh could not be run, its version compared with the minimum number by number. A gh that
+ * could not be run, exited non-zero, ran past its timeout, or named no release is reported as
+ * unasked: no comparison was made. Every detail is one line.
+ */
+export function versionLine(read) {
+  const line = (ok, detail) => ({ name: 'gh version', ok, detail });
+  if (read.unstarted !== undefined) return line(null, `\`gh --version\` could not be run here: ${read.unstarted}`);
+  if (read.timedOut) return line(null, `\`gh --version\` ran past its timeout of ${read.timeout} ms, and L0 ended it`);
+  if (read.status !== 0) return line(null, `\`gh --version\` exited ${read.status}, so no version was read`);
+  if (read.version === null) return line(null, `\`gh --version\` began \`${printable(read.line)}\`, which names no release as \`gh version <major>.<minor>.<patch>\`; Rigger requires gh ${GH_MINIMUM} or later`);
+  const ok = reaches(read.version, GH_MINIMUM);
+  return line(ok, ok ? `gh ${read.version} against the ${GH_MINIMUM} Rigger requires` : `gh ${read.version} is below the ${GH_MINIMUM} Rigger requires; install gh ${GH_MINIMUM} or later`);
 }
 
 /** The verdict a set of them folds to: unknown if any is, failed if any is, passed otherwise. */
@@ -891,15 +923,15 @@ export async function launchdCheck({ target = process.cwd(), platform = process.
 }
 
 /**
- * The checks `doctor` runs: the four its card lists, in that order, then the board checks, and
- * then board sharing, the required gate, admission and the launchd job. The forge
+ * The checks `doctor` runs: the Node version and the gh version, then gh authentication, agent
+ * CLI authentication and config validity, then the board checks, and then board sharing, the required gate, admission and the launchd job. The forge
  * checks read only once the config earns no refusals.
  *
  * Each takes the same options and reads the ones it needs, so this list is the whole of what
  * decides which checks there are and what order they are reported in. A check answers one line,
  * a list of lines, or null, which has nothing to report and prints no line.
  */
-export const CHECKS = [nodeVersion, ghAuth, agentAuth, configValidity, boardChecks, boardSharing, gateCheck, admissionCheck, launchdCheck];
+export const CHECKS = [nodeVersion, ghVersion, ghAuth, agentAuth, configValidity, boardChecks, boardSharing, gateCheck, admissionCheck, launchdCheck];
 
 /**
  * What a verb named `verb` prints and exits with where `here` and the source tree this Rigger is

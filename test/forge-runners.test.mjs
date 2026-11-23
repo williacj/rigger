@@ -18,6 +18,9 @@ import { repositoryWriteSide } from '../src/substrate/forge/repository-write.mjs
 import { itemWriteSide } from '../src/substrate/forge/item-write.mjs';
 import { dirname } from 'node:path';
 import { repositoryReads } from '../src/substrate/forge/read.mjs';
+import { GH_MINIMUM, readGhVersion } from '../src/substrate/forge/read.mjs';
+import { ghVersion } from '../src/cli/doctor.mjs';
+import { stubGh } from './stub-gh.mjs';
 import { UNKILLED } from './process-fixtures.mjs';
 
 /**
@@ -390,6 +393,72 @@ test('real gh refuses an ESC byte diff without the flag and readDiff preserves i
     }
     await new Promise((closed) => proxy.close(closed));
   }
+});
+
+// Host reason: wiring; the version read must reach the host's real gh through the read runner and L0, and read what it prints.
+// Rigger decision: test/gh-version.test.mjs — the gh version line reaches the minimum exactly where the version gh reports does, compared by number and never as text.
+test("the forge adapter's version read is the release on real gh's own first line, and a gh at the minimum takes the diff read's flag", { timeout: 60_000 }, async (t) => {
+  // `D16` rule 2: gh owns which release it is, and the read is a copy of its answer, so the host's
+  // gh is asked each run and the relation asserted, never today's number. The defects this catches
+  // are a read that takes its version from anywhere but gh's first line, and a minimum below the
+  // release that first accepts `--allow-escape-sequences`, which `readDiff` sends.
+  const gh = installedGh();
+  if (!gh) return t.skip('no real gh on PATH; version read probe not run');
+  const environment = { PATH: `${dirname(gh)}${delimiter}${process.env.PATH}`, GH_CONFIG_DIR: temporaryDirectory('rigger-gh-version-'), GH_NO_UPDATE_NOTIFIER: '1' };
+  const ask = (args) => new Promise((done) => execFile(gh, args, { env: { ...process.env, ...environment } },
+    (error, stdout, stderr) => done({ exit: error ? error.code : 0, stdout, stderr })));
+  const own = await ask(['--version']);
+  assert.equal(own.exit, 0, own.stderr);
+  const printed = own.stdout.split('\n')[0].match(/^gh version (\d+)\.(\d+)\.(\d+)/);
+  assert.ok(printed, `real gh's first line names no release: ${own.stdout}`);
+
+  const held = Object.fromEntries(Object.keys(environment).map((name) => [name, process.env[name]]));
+  Object.assign(process.env, environment);
+  let read;
+  try {
+    read = await readGhVersion({ emitter: UNKILLED });
+  } finally {
+    for (const [name, value] of Object.entries(held)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  }
+  assert.equal(read.version, printed.slice(1).join('.'), `the read gave ${read.version} for ${own.stdout}`);
+
+  const [major, minor, patch] = printed.slice(1).map(Number);
+  const [wantMajor, wantMinor, wantPatch] = GH_MINIMUM.split('.').map(Number);
+  const reaches = major !== wantMajor ? major > wantMajor : minor !== wantMinor ? minor > wantMinor : patch >= wantPatch;
+  if (reaches) {
+    const help = await ask(['api', '--help']);
+    assert.equal(help.exit, 0, help.stderr);
+    assert.match(help.stdout + help.stderr, /--allow-escape-sequences/, `gh ${read.version} reaches ${GH_MINIMUM} and its \`gh api --help\` lists no --allow-escape-sequences`);
+  }
+});
+
+// Host reason: wiring; doctor's version check must reach a gh found on the path through the read runner's real L0 spawn, which a scripted host cannot show.
+// Rigger decision: test/gh-version.test.mjs — the version read records one forge read call.end, ok, for the gh it started through L0.
+test('the gh version check reaches gh only through the forge read runner, which records the read as a forge call', async () => {
+  // This test owns the wiring: the defect it catches is a version check that reaches gh by a
+  // route of its own, around the read runner's allowlist, while still reaching the gh on the path
+  // and reporting a line. Only the forge adapter's runner records a forge `call.end`
+  // (`ARCHITECTURE.md`, "L0's call events"), so a gh reached any other way leaves none. Which side
+  // and outcome that record carries is `test/gh-version.test.mjs`'s to prove, and the verdict is
+  // that file's too, so neither is asserted here. The gh asked is a stand-in first on the path.
+  // `gh --version` as gh 2.103.3 answered it on macOS on 2026-11-21 (#1448, "Measured").
+  const gh = stubGh({ status: 0, stdout: 'gh version 2.103.3 (2026-10-26)\nhttps://github.com/cli/cli/releases/tag/v2.103.3\n', stderr: '' });
+  const events = [];
+  const emitter = { emit: (event, fields) => { events.push({ event, ...fields }); } };
+  const held = process.env.PATH;
+  process.env.PATH = gh.first();
+  let line;
+  try {
+    line = await ghVersion({ emitter });
+  } finally {
+    process.env.PATH = held;
+  }
+  assert.equal(line.name, 'gh version', line.detail);
+  assert.deepEqual(gh.calls(), ['--version']);
+  assert.equal(events.filter(({ event, system }) => event === 'call.end' && system === 'forge').length, 1, JSON.stringify(events));
 });
 
 test('the read runner admits a `gh api <path>` form only where gh itself sends it as a GET with no body', async (t) => {

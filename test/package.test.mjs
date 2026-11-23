@@ -240,7 +240,7 @@ test('the installed tarball runs init and then doctor in a scratch repository ou
   const gh = stubGh({ status: 1, stderr: 'You are not logged into any GitHub hosts. To log in, run: gh auth login\n' });
   const doctor = runInstalled(['doctor'], scratch, gh);
   const said = doctor.stdout + doctor.stderr;
-  assert.deepEqual(gh.calls(), ['auth status'], said);
+  assert.deepEqual(gh.calls(), ['--version', 'auth status'], said);
   assert.match(said, /^ {2}failed +gh authentication: `gh auth status` exited 1: You are not logged into any GitHub hosts\. To log in, run: gh auth login$/m);
   const heading = said.match(/^rigger doctor: \d+ of (\d+) checks passed in (.+)$/m);
   assert.ok(heading, `doctor printed no report:\n${said}`);

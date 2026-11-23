@@ -192,7 +192,8 @@ evidence that would bring it back.
 
 - A GitHub repository with a Projects v2 board. `rigger setup-board` creates the columns, fields
   and labels.
-- [`gh`](https://cli.github.com/), authenticated with access to that repository and board.
+- [`gh`](https://cli.github.com/) version 2.97.0 or later, authenticated with access to that
+  repository and board.
 - One coding-agent CLI, authenticated. Claude Code is the default adapter; Codex is shipped beside it.
 - Node.js 24 or later.
 - **macOS** today. **Windows** is planned through WSL2, pending a spike; native Windows is not in
@@ -212,7 +213,7 @@ the ordinary test suite; engine installation and supported engine hosts are sepa
 
 ```bash
 npx @williacj/rigger init          # write a starter config, fork the role templates
-npx @williacj/rigger doctor        # check Node, gh auth, agent CLI auth, config, board reachability, board columns, board priority field, board sharing, gate check required, admission, launchd job
+npx @williacj/rigger doctor        # check Node, gh version, gh auth, agent CLI auth, config, board reachability, board columns, board priority field, board sharing, gate check required, admission, launchd job
 npx @williacj/rigger setup-board   # create the board columns, fields, and labels
 npx @williacj/rigger plan          # show what the next run would pull, and what it refuses
 npx @williacj/rigger once          # pull and finish one card, then exit
