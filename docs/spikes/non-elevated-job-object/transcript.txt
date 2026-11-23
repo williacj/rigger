@@ -1,6 +1,6 @@
 ABOUTME: Card #1458 transcript: every spike command run through the step runner t.cjs, with its UTC start and end, host, exact argv,
 the script it carried, its pid and creation time, its exit and its full output.
-[MASKED EDIT: 129 distinct names of processes, programs, services and accounts that are not the spike's own are replaced by "[name withheld]" in this file, under the owner's ruling 1458#7090273806. The file before this edit had sha256 4bf2bef1f8fa5d4453da8cd57c956688f46aa4e562f2fad3b1265a469f887f9a. SIDs are replaced by "[SID withheld]", the base64 of a script that carried one by "[encoded command withheld]", a guessable digest by "[digest withheld]", and a reference to an earlier head or its CI run by "[an earlier head, kept off-repo]". In the account tables, padding beside a mask is collapsed. Details of the account's password, and sizes or fragments that describe a masked name, are replaced by a bracketed "withheld" mark.]
+[MASKED EDIT: 129 distinct names of processes, programs, services and accounts that are not the spike's own are replaced by "[name withheld]" in this file, under the owner's ruling 1458#7090273806. The file before this edit had sha256 4bf2bef1f8fa5d4453da8cd57c956688f46aa4e562f2fad3b1265a469f887f9a. SIDs are replaced by "[SID withheld]", the base64 of a script that carried one by "[encoded command withheld]", a guessable digest by "[digest withheld]", and a reference to an earlier head or its CI run by "[an earlier head, kept off-repo]". In the account tables, padding beside a mask is collapsed. Details of the account's password, and sizes or fragments that describe a masked name, are replaced by a bracketed "withheld" mark. A phrase that counted and described other people's accounts is reworded, in recorded commands, printed code and copied report text too; the report says where.]
 
 ### 2026-11-22T02:58:15.497Z -> 2026-11-22T02:58:16.369Z  host=laptop -> hostpc (user)  runner pid 93778, child pid 93820 (created Sat Nov 21 20:58:15 2026), exit 0
 $ ["ssh","hostpc","powershell.exe","-NoProfile","-NonInteractive","-EncodedCommand","JABFAHIAcgBvAHIAQQBjAHQAaQBvAG4AUAByAGUAZgBlAHIAZQBuAGMAZQAgAD0AIAAnAEMAbwBuAHQAaQBuAHUAZQAnAAoAIgB1AHQAYwAgACQAKAAoAEcAZQB0AC0ARABhAHQAZQApAC4AVABvAFUAbgBpAHYAZQByAHMAYQBsAFQAaQBtAGUAKAApAC4AVABvAFMAdAByAGkAbgBnACgAJwBvACcAKQApACIACgBjAG0AZAAgAC8AYwAgAHYAZQByAAoAIgB3AGgAbwBhAG0AaQA6ACAAJAAoAHcAaABvAGEAbQBpACkAIgAKACIAbgBvAGQAZQA6ACAAJAAoAEcAZQB0AC0AQwBvAG0AbQBhAG4AZAAgAG4AbwBkAGUAIAAtAEUAcgByAG8AcgBBAGMAdABpAG8AbgAgAFMAaQBsAGUAbgB0AGwAeQBDAG8AbgB0AGkAbgB1AGUAIAB8ACAARgBvAHIARQBhAGMAaAAtAE8AYgBqAGUAYwB0ACAAUwBvAHUAcgBjAGUAKQAiAAoAIgBuAG8AZABlACAALQAtAHYAZQByAHMAaQBvAG4AOgAgACQAKABuAG8AZABlACAALQAtAHYAZQByAHMAaQBvAG4AKQAiAAoAIgBuAHAAbQAgAC0ALQB2AGUAcgBzAGkAbwBuADoAIAAkACgAbgBwAG0AIAAtAC0AdgBlAHIAcwBpAG8AbgApACIACgAiAHMAcwBoAGQAXwBjAG8AbgBmAGkAZwAgAG4AbwBuAC0AYwBvAG0AbQBlAG4AdAAgAGwAaQBuAGUAcwA6ACIACgBHAGUAdAAtAEMAbwBuAHQAZQBuAHQAIABDADoAXABQAHIAbwBnAHIAYQBtAEQAYQB0AGEAXABzAHMAaABcAHMAcwBoAGQAXwBjAG8AbgBmAGkAZwAgAHwAIABXAGgAZQByAGUALQBPAGIAagBlAGMAdAAgAHsAIAAkAF8AIAAtAG4AbwB0AG0AYQB0AGMAaAAgACcAXgBcAHMAKgAoACMAfAAkACkAJwAgAH0ACgAiAGwAbwBjAGEAbAAgAGEAYwBjAG8AdQBuAHQAcwAgAGIAZQBmAG8AcgBlACAAYQBuAHkAIABjAGgAYQBuAGcAZQA6ACIACgBHAGUAdAAtAEwAbwBjAGEAbABVAHMAZQByACAAfAAgAFMAZQBsAGUAYwB0AC0ATwBiAGoAZQBjAHQAIABOAGEAbQBlACwAIABFAG4AYQBiAGwAZQBkACwAIABQAHIAaQBuAGMAaQBwAGEAbABTAG8AdQByAGMAZQAgAHwAIABGAG8AcgBtAGEAdAAtAFQAYQBiAGwAZQAgAC0AQQB1AHQAbwBTAGkAegBlACAAfAAgAE8AdQB0AC0AUwB0AHIAaQBuAGcAIAAtAFcAaQBkAHQAaAAgADIAMAAwAAoAIgBVAHMAZQByAHMAIABnAHIAbwB1AHAAIABtAGUAbQBiAGUAcgBzADoAIgAKAEcAZQB0AC0ATABvAGMAYQBsAEcAcgBvAHUAcABNAGUAbQBiAGUAcgAgAC0ARwByAG8AdQBwACAAVQBzAGUAcgBzACAAfAAgAFMAZQBsAGUAYwB0AC0ATwBiAGoAZQBjAHQAIABOAGEAbQBlACwAIABPAGIAagBlAGMAdABDAGwAYQBzAHMALAAgAFAAcgBpAG4AYwBpAHAAYQBsAFMAbwB1AHIAYwBlACAAfAAgAEYAbwByAG0AYQB0AC0AVABhAGIAbABlACAALQBBAHUAdABvAFMAaQB6AGUAIAB8ACAATwB1AHQALQBTAHQAcgBpAG4AZwAgAC0AVwBpAGQAdABoACAAMgAwADAACgAiAHAAcgBvAGYAaQBsAGUAcwAgAHUAbgBkAGUAcgAgAEMAOgBcAFUAcwBlAHIAcwA6ACIACgBHAGUAdAAtAEMAaABpAGwAZABJAHQAZQBtACAAQwA6AFwAVQBzAGUAcgBzACAALQBEAGkAcgBlAGMAdABvAHIAeQAgAHwAIABTAGUAbABlAGMAdAAtAE8AYgBqAGUAYwB0ACAALQBFAHgAcABhAG4AZABQAHIAbwBwAGUAcgB0AHkAIABOAGEAbQBlAAoA"]
@@ -4904,3 +4904,590 @@ edited
 $ ["node","spikes/1458-spike-engineer/gen-record.cjs"]
 --- output ---
 entries: 170; distinct (host, pid, creation time): 94; entries written later than the next command: 0
+
+### 2026-11-23T22:20:34.110Z -> 2026-11-23T22:20:37.453Z  host=laptop  runner pid 44066, child pid 44190 (created Mon Nov 23 16:20:34 2026), exit 0
+$ ["grep","-rnIiEo","gh[pousr]_[A-Za-z0-9]{20,}|github_pat_|sk-ant-|sk-[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|xox[baprs]-|BEGIN [A-Z ]*PRIVATE KEY|bearer [A-Za-z0-9._-]{20,}|(password|passwd|secret|token|api[_-]?key)[[:space:]]*[:=]","docs/spikes/non-elevated-job-object"]
+--- output ---
+docs/spikes/non-elevated-job-object/transcript.txt:259:token:
+docs/spikes/non-elevated-job-object/transcript.txt:286:token:
+docs/spikes/non-elevated-job-object/transcript.txt:382:token:
+docs/spikes/non-elevated-job-object/transcript.txt:473:token:
+docs/spikes/non-elevated-job-object/transcript.txt:570:token:
+docs/spikes/non-elevated-job-object/transcript.txt:2223:github_pat_
+docs/spikes/non-elevated-job-object/transcript.txt:2223:sk-ant-
+docs/spikes/non-elevated-job-object/transcript.txt:2225:token:
+docs/spikes/non-elevated-job-object/transcript.txt:2226:token:
+docs/spikes/non-elevated-job-object/transcript.txt:2227:token:
+docs/spikes/non-elevated-job-object/transcript.txt:2228:token:
+docs/spikes/non-elevated-job-object/transcript.txt:2229:token:
+docs/spikes/non-elevated-job-object/transcript.txt:2230:github_pat_
+docs/spikes/non-elevated-job-object/transcript.txt:2230:sk-ant-
+docs/spikes/non-elevated-job-object/transcript.txt:2231:sk-ant-
+docs/spikes/non-elevated-job-object/transcript.txt:2232:github_pat_
+docs/spikes/non-elevated-job-object/transcript.txt:2232:sk-ant-
+docs/spikes/non-elevated-job-object/transcript.txt:2232:sk-ant-
+docs/spikes/non-elevated-job-object/transcript.txt:2233:secret =
+docs/spikes/non-elevated-job-object/transcript.txt:2233:secret =
+docs/spikes/non-elevated-job-object/transcript.txt:2234:Token:
+docs/spikes/non-elevated-job-object/transcript.txt:2234:token:
+docs/spikes/non-elevated-job-object/transcript.txt:2235:token:
+docs/spikes/non-elevated-job-object/transcript.txt:2236:token:
+docs/spikes/non-elevated-job-object/transcript.txt:2237:token:
+docs/spikes/non-elevated-job-object/transcript.txt:2238:token:
+docs/spikes/non-elevated-job-object/transcript.txt:2239:token:
+docs/spikes/non-elevated-job-object/transcript.txt:2240:token:
+docs/spikes/non-elevated-job-object/transcript.txt:2241:token:
+docs/spikes/non-elevated-job-object/transcript.txt:2242:Token:
+docs/spikes/non-elevated-job-object/transcript.txt:2243:token:
+docs/spikes/non-elevated-job-object/transcript.txt:2244:secret =
+docs/spikes/non-elevated-job-object/transcript.txt:2245:secret =
+docs/spikes/non-elevated-job-object/transcript.txt:2999:github_pat_
+docs/spikes/non-elevated-job-object/transcript.txt:2999:sk-ant-
+docs/spikes/non-elevated-job-object/transcript.txt:3001:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3002:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3003:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3004:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3005:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3006:github_pat_
+docs/spikes/non-elevated-job-object/transcript.txt:3006:sk-ant-
+docs/spikes/non-elevated-job-object/transcript.txt:3007:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3008:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3009:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3010:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3011:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3012:github_pat_
+docs/spikes/non-elevated-job-object/transcript.txt:3012:sk-ant-
+docs/spikes/non-elevated-job-object/transcript.txt:3013:sk-ant-
+docs/spikes/non-elevated-job-object/transcript.txt:3014:github_pat_
+docs/spikes/non-elevated-job-object/transcript.txt:3014:sk-ant-
+docs/spikes/non-elevated-job-object/transcript.txt:3014:sk-ant-
+docs/spikes/non-elevated-job-object/transcript.txt:3015:secret =
+docs/spikes/non-elevated-job-object/transcript.txt:3015:secret =
+docs/spikes/non-elevated-job-object/transcript.txt:3016:Token:
+docs/spikes/non-elevated-job-object/transcript.txt:3016:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3017:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3018:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3019:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3020:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3021:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3022:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3023:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3024:Token:
+docs/spikes/non-elevated-job-object/transcript.txt:3025:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3026:secret =
+docs/spikes/non-elevated-job-object/transcript.txt:3027:secret =
+docs/spikes/non-elevated-job-object/transcript.txt:3028:github_pat_
+docs/spikes/non-elevated-job-object/transcript.txt:3028:sk-ant-
+docs/spikes/non-elevated-job-object/transcript.txt:3029:sk-ant-
+docs/spikes/non-elevated-job-object/transcript.txt:3030:github_pat_
+docs/spikes/non-elevated-job-object/transcript.txt:3030:sk-ant-
+docs/spikes/non-elevated-job-object/transcript.txt:3030:sk-ant-
+docs/spikes/non-elevated-job-object/transcript.txt:3031:secret =
+docs/spikes/non-elevated-job-object/transcript.txt:3031:secret =
+docs/spikes/non-elevated-job-object/transcript.txt:3032:Token:
+docs/spikes/non-elevated-job-object/transcript.txt:3032:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3033:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3034:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3035:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3036:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3037:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3038:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3039:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3040:Token:
+docs/spikes/non-elevated-job-object/transcript.txt:3041:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3042:secret =
+docs/spikes/non-elevated-job-object/transcript.txt:3043:secret =
+docs/spikes/non-elevated-job-object/transcript.txt:3802:github_pat_
+docs/spikes/non-elevated-job-object/transcript.txt:3802:sk-ant-
+docs/spikes/non-elevated-job-object/transcript.txt:3804:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3805:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3806:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3807:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3808:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3809:github_pat_
+docs/spikes/non-elevated-job-object/transcript.txt:3809:sk-ant-
+docs/spikes/non-elevated-job-object/transcript.txt:3810:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3811:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3812:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3813:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3814:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3815:github_pat_
+docs/spikes/non-elevated-job-object/transcript.txt:3815:sk-ant-
+docs/spikes/non-elevated-job-object/transcript.txt:3816:sk-ant-
+docs/spikes/non-elevated-job-object/transcript.txt:3817:github_pat_
+docs/spikes/non-elevated-job-object/transcript.txt:3817:sk-ant-
+docs/spikes/non-elevated-job-object/transcript.txt:3817:sk-ant-
+docs/spikes/non-elevated-job-object/transcript.txt:3818:secret =
+docs/spikes/non-elevated-job-object/transcript.txt:3818:secret =
+docs/spikes/non-elevated-job-object/transcript.txt:3819:Token:
+docs/spikes/non-elevated-job-object/transcript.txt:3819:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3820:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3821:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3822:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3823:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3824:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3825:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3826:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3827:Token:
+docs/spikes/non-elevated-job-object/transcript.txt:3828:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3829:secret =
+docs/spikes/non-elevated-job-object/transcript.txt:3830:secret =
+docs/spikes/non-elevated-job-object/transcript.txt:3831:github_pat_
+docs/spikes/non-elevated-job-object/transcript.txt:3831:sk-ant-
+docs/spikes/non-elevated-job-object/transcript.txt:3832:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3833:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3834:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3835:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3836:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3837:github_pat_
+docs/spikes/non-elevated-job-object/transcript.txt:3837:sk-ant-
+docs/spikes/non-elevated-job-object/transcript.txt:3838:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3839:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3840:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3841:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3842:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3843:github_pat_
+docs/spikes/non-elevated-job-object/transcript.txt:3843:sk-ant-
+docs/spikes/non-elevated-job-object/transcript.txt:3844:sk-ant-
+docs/spikes/non-elevated-job-object/transcript.txt:3845:github_pat_
+docs/spikes/non-elevated-job-object/transcript.txt:3845:sk-ant-
+docs/spikes/non-elevated-job-object/transcript.txt:3845:sk-ant-
+docs/spikes/non-elevated-job-object/transcript.txt:3846:secret =
+docs/spikes/non-elevated-job-object/transcript.txt:3846:secret =
+docs/spikes/non-elevated-job-object/transcript.txt:3847:Token:
+docs/spikes/non-elevated-job-object/transcript.txt:3847:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3848:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3849:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3850:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3851:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3852:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3853:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3854:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3855:Token:
+docs/spikes/non-elevated-job-object/transcript.txt:3856:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3857:secret =
+docs/spikes/non-elevated-job-object/transcript.txt:3858:secret =
+docs/spikes/non-elevated-job-object/transcript.txt:3859:github_pat_
+docs/spikes/non-elevated-job-object/transcript.txt:3859:sk-ant-
+docs/spikes/non-elevated-job-object/transcript.txt:3860:sk-ant-
+docs/spikes/non-elevated-job-object/transcript.txt:3861:github_pat_
+docs/spikes/non-elevated-job-object/transcript.txt:3861:sk-ant-
+docs/spikes/non-elevated-job-object/transcript.txt:3861:sk-ant-
+docs/spikes/non-elevated-job-object/transcript.txt:3862:secret =
+docs/spikes/non-elevated-job-object/transcript.txt:3862:secret =
+docs/spikes/non-elevated-job-object/transcript.txt:3863:Token:
+docs/spikes/non-elevated-job-object/transcript.txt:3863:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3864:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3865:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3866:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3867:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3868:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3869:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3870:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3871:Token:
+docs/spikes/non-elevated-job-object/transcript.txt:3872:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3873:secret =
+docs/spikes/non-elevated-job-object/transcript.txt:3874:secret =
+docs/spikes/non-elevated-job-object/transcript.txt:3875:github_pat_
+docs/spikes/non-elevated-job-object/transcript.txt:3875:sk-ant-
+docs/spikes/non-elevated-job-object/transcript.txt:3876:sk-ant-
+docs/spikes/non-elevated-job-object/transcript.txt:3877:github_pat_
+docs/spikes/non-elevated-job-object/transcript.txt:3877:sk-ant-
+docs/spikes/non-elevated-job-object/transcript.txt:3877:sk-ant-
+docs/spikes/non-elevated-job-object/transcript.txt:3878:secret =
+docs/spikes/non-elevated-job-object/transcript.txt:3878:secret =
+docs/spikes/non-elevated-job-object/transcript.txt:3879:Token:
+docs/spikes/non-elevated-job-object/transcript.txt:3879:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3880:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3881:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3882:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3883:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3884:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3885:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3886:github_pat_
+docs/spikes/non-elevated-job-object/transcript.txt:3886:sk-ant-
+docs/spikes/non-elevated-job-object/transcript.txt:3887:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3888:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3889:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3890:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3891:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3892:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3893:github_pat_
+docs/spikes/non-elevated-job-object/transcript.txt:3893:sk-ant-
+docs/spikes/non-elevated-job-object/transcript.txt:3894:sk-ant-
+docs/spikes/non-elevated-job-object/transcript.txt:3895:github_pat_
+docs/spikes/non-elevated-job-object/transcript.txt:3895:sk-ant-
+docs/spikes/non-elevated-job-object/transcript.txt:3895:sk-ant-
+docs/spikes/non-elevated-job-object/transcript.txt:3896:Token:
+docs/spikes/non-elevated-job-object/transcript.txt:3897:secret =
+docs/spikes/non-elevated-job-object/transcript.txt:3898:secret =
+docs/spikes/non-elevated-job-object/transcript.txt:3899:secret =
+docs/spikes/non-elevated-job-object/transcript.txt:3900:github_pat_
+docs/spikes/non-elevated-job-object/transcript.txt:3900:sk-ant-
+docs/spikes/non-elevated-job-object/transcript.txt:3901:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3902:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3903:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3904:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3905:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3906:github_pat_
+docs/spikes/non-elevated-job-object/transcript.txt:3906:sk-ant-
+docs/spikes/non-elevated-job-object/transcript.txt:3907:sk-ant-
+docs/spikes/non-elevated-job-object/transcript.txt:3908:github_pat_
+docs/spikes/non-elevated-job-object/transcript.txt:3908:sk-ant-
+docs/spikes/non-elevated-job-object/transcript.txt:3909:secret =
+docs/spikes/non-elevated-job-object/transcript.txt:3910:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3910:Token:
+docs/spikes/non-elevated-job-object/transcript.txt:3911:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3912:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3913:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3914:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3915:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3916:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3917:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3918:Token:
+docs/spikes/non-elevated-job-object/transcript.txt:3919:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3920:secret =
+docs/spikes/non-elevated-job-object/transcript.txt:3921:secret =
+docs/spikes/non-elevated-job-object/transcript.txt:3922:github_pat_
+docs/spikes/non-elevated-job-object/transcript.txt:3922:sk-ant-
+docs/spikes/non-elevated-job-object/transcript.txt:3923:github_pat_
+docs/spikes/non-elevated-job-object/transcript.txt:3923:sk-ant-
+docs/spikes/non-elevated-job-object/transcript.txt:3924:github_pat_
+docs/spikes/non-elevated-job-object/transcript.txt:3924:sk-ant-
+docs/spikes/non-elevated-job-object/transcript.txt:3925:secret =
+docs/spikes/non-elevated-job-object/transcript.txt:3926:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3927:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3928:Token:
+docs/spikes/non-elevated-job-object/transcript.txt:3929:github_pat_
+docs/spikes/non-elevated-job-object/transcript.txt:3929:sk-ant-
+docs/spikes/non-elevated-job-object/transcript.txt:3930:secret =
+docs/spikes/non-elevated-job-object/transcript.txt:3931:sk-ant-
+docs/spikes/non-elevated-job-object/transcript.txt:3932:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3933:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3933:Token:
+docs/spikes/non-elevated-job-object/transcript.txt:3934:github_pat_
+docs/spikes/non-elevated-job-object/transcript.txt:3934:sk-ant-
+docs/spikes/non-elevated-job-object/transcript.txt:3935:secret =
+docs/spikes/non-elevated-job-object/transcript.txt:3936:sk-ant-
+docs/spikes/non-elevated-job-object/transcript.txt:3937:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3938:Token:
+docs/spikes/non-elevated-job-object/transcript.txt:3939:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3939:Token:
+docs/spikes/non-elevated-job-object/transcript.txt:3940:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3940:secret =
+docs/spikes/non-elevated-job-object/transcript.txt:3940:github_pat_
+docs/spikes/non-elevated-job-object/transcript.txt:3940:sk-ant-
+docs/spikes/non-elevated-job-object/transcript.txt:3941:github_pat_
+docs/spikes/non-elevated-job-object/transcript.txt:3941:sk-ant-
+docs/spikes/non-elevated-job-object/transcript.txt:3942:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3943:Token:
+docs/spikes/non-elevated-job-object/transcript.txt:3944:secret =
+docs/spikes/non-elevated-job-object/transcript.txt:3945:github_pat_
+docs/spikes/non-elevated-job-object/transcript.txt:3945:sk-ant-
+docs/spikes/non-elevated-job-object/transcript.txt:3946:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3946:secret =
+docs/spikes/non-elevated-job-object/transcript.txt:3946:github_pat_
+docs/spikes/non-elevated-job-object/transcript.txt:3946:sk-ant-
+docs/spikes/non-elevated-job-object/transcript.txt:3947:github_pat_
+docs/spikes/non-elevated-job-object/transcript.txt:3947:sk-ant-
+docs/spikes/non-elevated-job-object/transcript.txt:3948:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3949:Token:
+docs/spikes/non-elevated-job-object/transcript.txt:3950:secret =
+docs/spikes/non-elevated-job-object/transcript.txt:3951:github_pat_
+docs/spikes/non-elevated-job-object/transcript.txt:3951:sk-ant-
+docs/spikes/non-elevated-job-object/transcript.txt:3952:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3952:secret =
+docs/spikes/non-elevated-job-object/transcript.txt:3952:github_pat_
+docs/spikes/non-elevated-job-object/transcript.txt:3952:sk-ant-
+docs/spikes/non-elevated-job-object/transcript.txt:3953:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3953:secret =
+docs/spikes/non-elevated-job-object/transcript.txt:3953:github_pat_
+docs/spikes/non-elevated-job-object/transcript.txt:3953:sk-ant-
+docs/spikes/non-elevated-job-object/transcript.txt:3954:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3955:Token:
+docs/spikes/non-elevated-job-object/transcript.txt:3956:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3957:secret =
+docs/spikes/non-elevated-job-object/transcript.txt:3958:secret =
+docs/spikes/non-elevated-job-object/transcript.txt:3961:token:
+docs/spikes/non-elevated-job-object/transcript.txt:3961:secret =
+docs/spikes/non-elevated-job-object/transcript.txt:3961:github_pat_
+docs/spikes/non-elevated-job-object/transcript.txt:3961:sk-ant-
+docs/spikes/non-elevated-job-object/transcript.txt:3961:github_pat_
+docs/spikes/non-elevated-job-object/transcript.txt:3961:sk-ant-
+docs/spikes/non-elevated-job-object/session-log.txt:790:github_pat_
+docs/spikes/non-elevated-job-object/session-log.txt:790:sk-ant-
+docs/spikes/non-elevated-job-object/session-log.txt:797:sk-ant-
+docs/spikes/non-elevated-job-object/session-log.txt:804:github_pat_
+docs/spikes/non-elevated-job-object/session-log.txt:804:sk-ant-
+docs/spikes/non-elevated-job-object/session-log.txt:804:sk-ant-
+docs/spikes/non-elevated-job-object/session-log.txt:1378:secret =
+docs/spikes/non-elevated-job-object/session-log.txt:1378:secret =
+docs/spikes/non-elevated-job-object/session-log.txt:1614:Token:
+docs/spikes/non-elevated-job-object/session-log.txt:1614:token:
+docs/spikes/non-elevated-job-object/session-log.txt:1761:token:
+docs/spikes/non-elevated-job-object/session-log.txt:1968:token:
+docs/spikes/non-elevated-job-object/session-log.txt:2036:token:
+docs/spikes/non-elevated-job-object/session-log.txt:2155:token:
+docs/spikes/non-elevated-job-object/session-log.txt:2210:token:
+docs/spikes/non-elevated-job-object/session-log.txt:3195:token:
+docs/spikes/non-elevated-job-object/session-log.txt:3367:github_pat_
+docs/spikes/non-elevated-job-object/session-log.txt:3367:sk-ant-
+docs/spikes/non-elevated-job-object/session-log.txt:3374:token:
+docs/spikes/non-elevated-job-object/session-log.txt:3375:token:
+docs/spikes/non-elevated-job-object/session-log.txt:3376:token:
+docs/spikes/non-elevated-job-object/session-log.txt:3377:token:
+docs/spikes/non-elevated-job-object/session-log.txt:3378:token:
+docs/spikes/non-elevated-job-object/session-log.txt:3383:token:
+docs/spikes/non-elevated-job-object/session-log.txt:3391:github_pat_
+docs/spikes/non-elevated-job-object/session-log.txt:3391:sk-ant-
+docs/spikes/non-elevated-job-object/session-log.txt:3392:sk-ant-
+docs/spikes/non-elevated-job-object/session-log.txt:3393:github_pat_
+docs/spikes/non-elevated-job-object/session-log.txt:3393:sk-ant-
+docs/spikes/non-elevated-job-object/session-log.txt:3393:sk-ant-
+docs/spikes/non-elevated-job-object/session-log.txt:3395:Token:
+docs/spikes/non-elevated-job-object/session-log.txt:3396:secret =
+docs/spikes/non-elevated-job-object/session-log.txt:3397:secret =
+docs/spikes/non-elevated-job-object/session-log.txt:3398:secret =
+docs/spikes/non-elevated-job-object/session-log.txt:3402:github_pat_
+docs/spikes/non-elevated-job-object/session-log.txt:3402:sk-ant-
+docs/spikes/non-elevated-job-object/session-log.txt:3404:token:
+docs/spikes/non-elevated-job-object/session-log.txt:3405:token:
+docs/spikes/non-elevated-job-object/session-log.txt:3406:token:
+docs/spikes/non-elevated-job-object/session-log.txt:3407:token:
+docs/spikes/non-elevated-job-object/session-log.txt:3408:token:
+docs/spikes/non-elevated-job-object/session-log.txt:3409:github_pat_
+docs/spikes/non-elevated-job-object/session-log.txt:3409:sk-ant-
+docs/spikes/non-elevated-job-object/session-log.txt:3410:sk-ant-
+docs/spikes/non-elevated-job-object/session-log.txt:3411:github_pat_
+docs/spikes/non-elevated-job-object/session-log.txt:3411:sk-ant-
+docs/spikes/non-elevated-job-object/session-log.txt:3412:secret =
+docs/spikes/non-elevated-job-object/session-log.txt:3413:token:
+docs/spikes/non-elevated-job-object/session-log.txt:3413:Token:
+docs/spikes/non-elevated-job-object/session-log.txt:3414:token:
+docs/spikes/non-elevated-job-object/session-log.txt:3415:token:
+docs/spikes/non-elevated-job-object/session-log.txt:3416:token:
+docs/spikes/non-elevated-job-object/session-log.txt:3417:token:
+docs/spikes/non-elevated-job-object/session-log.txt:3418:token:
+docs/spikes/non-elevated-job-object/session-log.txt:3419:token:
+docs/spikes/non-elevated-job-object/session-log.txt:3420:token:
+docs/spikes/non-elevated-job-object/session-log.txt:3421:Token:
+docs/spikes/non-elevated-job-object/session-log.txt:3422:token:
+docs/spikes/non-elevated-job-object/session-log.txt:3423:secret =
+docs/spikes/non-elevated-job-object/session-log.txt:3424:secret =
+docs/spikes/non-elevated-job-object/session-log.txt:3450:github_pat_
+docs/spikes/non-elevated-job-object/session-log.txt:3450:sk-ant-
+docs/spikes/non-elevated-job-object/session-log.txt:3463:github_pat_
+docs/spikes/non-elevated-job-object/session-log.txt:3463:sk-ant-
+docs/spikes/non-elevated-job-object/session-log.txt:3465:github_pat_
+docs/spikes/non-elevated-job-object/session-log.txt:3465:sk-ant-
+docs/spikes/non-elevated-job-object/session-log.txt:3468:secret =
+docs/spikes/non-elevated-job-object/session-log.txt:3469:token:
+docs/spikes/non-elevated-job-object/session-log.txt:3470:token:
+docs/spikes/non-elevated-job-object/session-log.txt:3471:Token:
+docs/spikes/non-elevated-job-object/session-log.txt:3472:github_pat_
+docs/spikes/non-elevated-job-object/session-log.txt:3472:sk-ant-
+docs/spikes/non-elevated-job-object/session-log.txt:3473:secret =
+docs/spikes/non-elevated-job-object/session-log.txt:3474:sk-ant-
+docs/spikes/non-elevated-job-object/session-log.txt:3475:token:
+docs/spikes/non-elevated-job-object/session-log.txt:3476:token:
+docs/spikes/non-elevated-job-object/session-log.txt:3476:Token:
+docs/spikes/non-elevated-job-object/session-log.txt:3477:github_pat_
+docs/spikes/non-elevated-job-object/session-log.txt:3477:sk-ant-
+docs/spikes/non-elevated-job-object/session-log.txt:3478:secret =
+docs/spikes/non-elevated-job-object/session-log.txt:3479:sk-ant-
+docs/spikes/non-elevated-job-object/session-log.txt:3480:token:
+docs/spikes/non-elevated-job-object/session-log.txt:3481:Token:
+docs/spikes/non-elevated-job-object/session-log.txt:3482:token:
+docs/spikes/non-elevated-job-object/session-log.txt:3482:Token:
+docs/spikes/non-elevated-job-object/session-log.txt:3488:token:
+docs/spikes/non-elevated-job-object/session-log.txt:3488:secret =
+docs/spikes/non-elevated-job-object/session-log.txt:3488:github_pat_
+docs/spikes/non-elevated-job-object/session-log.txt:3488:sk-ant-
+docs/spikes/non-elevated-job-object/session-log.txt:3522:github_pat_
+docs/spikes/non-elevated-job-object/session-log.txt:3522:sk-ant-
+docs/spikes/non-elevated-job-object/session-log.txt:3527:token:
+docs/spikes/non-elevated-job-object/session-log.txt:3529:Token:
+docs/spikes/non-elevated-job-object/session-log.txt:3530:secret =
+docs/spikes/non-elevated-job-object/session-log.txt:3532:github_pat_
+docs/spikes/non-elevated-job-object/session-log.txt:3532:sk-ant-
+docs/spikes/non-elevated-job-object/session-log.txt:3539:token:
+docs/spikes/non-elevated-job-object/session-log.txt:3539:secret =
+docs/spikes/non-elevated-job-object/session-log.txt:3539:github_pat_
+docs/spikes/non-elevated-job-object/session-log.txt:3539:sk-ant-
+docs/spikes/non-elevated-job-object/session-log.txt:4297:github_pat_
+docs/spikes/non-elevated-job-object/session-log.txt:4297:sk-ant-
+docs/spikes/non-elevated-job-object/session-log.txt:4302:token:
+docs/spikes/non-elevated-job-object/session-log.txt:4304:Token:
+docs/spikes/non-elevated-job-object/session-log.txt:4305:secret =
+docs/spikes/non-elevated-job-object/session-log.txt:4307:github_pat_
+docs/spikes/non-elevated-job-object/session-log.txt:4307:sk-ant-
+docs/spikes/non-elevated-job-object/session-log.txt:4314:token:
+docs/spikes/non-elevated-job-object/session-log.txt:4314:secret =
+docs/spikes/non-elevated-job-object/session-log.txt:4314:github_pat_
+docs/spikes/non-elevated-job-object/session-log.txt:4314:sk-ant-
+docs/spikes/non-elevated-job-object/session-log.txt:4395:token:
+docs/spikes/non-elevated-job-object/session-log.txt:4395:secret =
+docs/spikes/non-elevated-job-object/session-log.txt:4395:github_pat_
+docs/spikes/non-elevated-job-object/session-log.txt:4395:sk-ant-
+docs/spikes/non-elevated-job-object/session-log.txt:4405:token:
+docs/spikes/non-elevated-job-object/session-log.txt:4405:secret =
+docs/spikes/non-elevated-job-object/session-log.txt:4405:github_pat_
+docs/spikes/non-elevated-job-object/session-log.txt:4405:sk-ant-
+docs/spikes/non-elevated-job-object/session-log.txt:4405:token:
+docs/spikes/non-elevated-job-object/session-log.txt:4405:secret =
+docs/spikes/non-elevated-job-object/session-log.txt:4405:github_pat_
+docs/spikes/non-elevated-job-object/session-log.txt:4405:sk-ant-
+docs/spikes/non-elevated-job-object/session-log.txt:4407:token:
+docs/spikes/non-elevated-job-object/session-log.txt:4407:secret =
+docs/spikes/non-elevated-job-object/session-log.txt:4407:github_pat_
+docs/spikes/non-elevated-job-object/session-log.txt:4407:sk-ant-
+docs/spikes/non-elevated-job-object/session-log.txt:4408:token:
+docs/spikes/non-elevated-job-object/session-log.txt:4408:secret =
+docs/spikes/non-elevated-job-object/session-log.txt:4408:github_pat_
+docs/spikes/non-elevated-job-object/session-log.txt:4408:sk-ant-
+docs/spikes/non-elevated-job-object/session-log.txt:4409:token:
+docs/spikes/non-elevated-job-object/session-log.txt:4409:secret =
+docs/spikes/non-elevated-job-object/session-log.txt:4409:github_pat_
+docs/spikes/non-elevated-job-object/session-log.txt:4409:sk-ant-
+docs/spikes/non-elevated-job-object/session-log.txt:4414:github_pat_
+docs/spikes/non-elevated-job-object/session-log.txt:4414:sk-ant-
+docs/spikes/non-elevated-job-object/session-log.txt:4420:token:
+docs/spikes/non-elevated-job-object/session-log.txt:4420:secret =
+docs/spikes/non-elevated-job-object/session-log.txt:4420:github_pat_
+docs/spikes/non-elevated-job-object/session-log.txt:4420:sk-ant-
+docs/spikes/non-elevated-job-object/session-log.txt:4423:token:
+docs/spikes/non-elevated-job-object/session-log.txt:4423:Token:
+docs/spikes/non-elevated-job-object/session-log.txt:4424:Token:
+docs/spikes/non-elevated-job-object/session-log.txt:4425:token:
+docs/spikes/non-elevated-job-object/session-log.txt:4426:token:
+docs/spikes/non-elevated-job-object/session-log.txt:4426:Token:
+docs/spikes/non-elevated-job-object/session-log.txt:4427:token:
+docs/spikes/non-elevated-job-object/session-log.txt:4428:Token:
+docs/spikes/non-elevated-job-object/session-log.txt:4429:token:
+docs/spikes/non-elevated-job-object/session-log.txt:4430:token:
+docs/spikes/non-elevated-job-object/session-log.txt:4431:secret =
+docs/spikes/non-elevated-job-object/session-log.txt:4432:token:
+docs/spikes/non-elevated-job-object/session-log.txt:4433:Token:
+docs/spikes/non-elevated-job-object/session-log.txt:4434:token:
+docs/spikes/non-elevated-job-object/session-log.txt:4435:token:
+docs/spikes/non-elevated-job-object/session-log.txt:4436:token:
+docs/spikes/non-elevated-job-object/session-log.txt:4437:token:
+docs/spikes/non-elevated-job-object/session-log.txt:4438:token:
+docs/spikes/non-elevated-job-object/session-log.txt:4439:token:
+docs/spikes/non-elevated-job-object/session-log.txt:4440:token:
+docs/spikes/non-elevated-job-object/session-log.txt:4441:token:
+docs/spikes/non-elevated-job-object/session-log.txt:4441:Token:
+docs/spikes/non-elevated-job-object/session-log.txt:4442:token:
+docs/spikes/non-elevated-job-object/session-log.txt:4445:token:
+docs/spikes/non-elevated-job-object/session-log.txt:4445:secret =
+docs/spikes/non-elevated-job-object/session-log.txt:4445:github_pat_
+docs/spikes/non-elevated-job-object/session-log.txt:4445:sk-ant-
+docs/spikes/non-elevated-job-object/session-log.txt:4445:github_pat_
+docs/spikes/non-elevated-job-object/session-log.txt:4445:sk-ant-
+docs/spikes/non-elevated-job-object/session-log.txt:4454:token:
+docs/spikes/non-elevated-job-object/session-log.txt:4454:secret =
+docs/spikes/non-elevated-job-object/session-log.txt:4454:github_pat_
+docs/spikes/non-elevated-job-object/session-log.txt:4454:sk-ant-
+docs/spikes/non-elevated-job-object/session-log.txt:4454:github_pat_
+docs/spikes/non-elevated-job-object/session-log.txt:4454:sk-ant-
+docs/spikes/non-elevated-job-object/session-log.txt:4481:github_pat_
+docs/spikes/non-elevated-job-object/session-log.txt:4481:sk-ant-
+docs/spikes/non-elevated-job-object/session-log.txt:4488:token:
+docs/spikes/non-elevated-job-object/session-log.txt:4490:Token:
+docs/spikes/non-elevated-job-object/session-log.txt:4492:secret =
+docs/spikes/non-elevated-job-object/session-log.txt:4494:github_pat_
+docs/spikes/non-elevated-job-object/session-log.txt:4494:sk-ant-
+docs/spikes/non-elevated-job-object/session-log.txt:4497:token:
+docs/spikes/non-elevated-job-object/session-log.txt:4497:secret =
+docs/spikes/non-elevated-job-object/session-log.txt:4503:token:
+docs/spikes/non-elevated-job-object/session-log.txt:4503:secret =
+docs/spikes/non-elevated-job-object/session-log.txt:4503:github_pat_
+docs/spikes/non-elevated-job-object/session-log.txt:4503:sk-ant-
+docs/spikes/non-elevated-job-object/session-log.txt:4503:github_pat_
+docs/spikes/non-elevated-job-object/session-log.txt:4503:sk-ant-
+docs/spikes/non-elevated-job-object/code/win/launcher.cjs:23:token:
+docs/spikes/non-elevated-job-object/code/win/win.cjs:30:Token:
+docs/spikes/non-elevated-job-object/code/win/win.cjs:127:token:
+docs/spikes/non-elevated-job-object/code/t.cjs:14:secret =
+docs/spikes/non-elevated-job-object/code/t.cjs:19:secret =
+
+### 2026-11-23T22:20:37.568Z -> 2026-11-23T22:20:41.595Z  host=laptop  runner pid 47017, child pid 47077 (created Mon Nov 23 16:20:37 2026), exit 0
+$ ["grep","-rnIiEo","gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-ant-[A-Za-z0-9_-]{20,}|sk-[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{10,}|BEGIN [A-Z ]*PRIVATE KEY-----|bearer [A-Za-z0-9._-]{20,}|(password|passwd|secret|api[_-]?key)[[:space:]]*[:=][[:space:]]*[^[:space:]]{6,}","docs/spikes/non-elevated-job-object"]
+--- output ---
+docs/spikes/non-elevated-job-object/transcript.txt:2233:secret = a.shift();\n
+docs/spikes/non-elevated-job-object/transcript.txt:2245:secret = a.shift();
+docs/spikes/non-elevated-job-object/transcript.txt:3015:secret = a.shift();\n
+docs/spikes/non-elevated-job-object/transcript.txt:3027:secret = a.shift();
+docs/spikes/non-elevated-job-object/transcript.txt:3031:secret = a.shift();\n
+docs/spikes/non-elevated-job-object/transcript.txt:3043:secret = a.shift();
+docs/spikes/non-elevated-job-object/transcript.txt:3818:secret = a.shift();\n
+docs/spikes/non-elevated-job-object/transcript.txt:3830:secret = a.shift();
+docs/spikes/non-elevated-job-object/transcript.txt:3846:secret = a.shift();\n
+docs/spikes/non-elevated-job-object/transcript.txt:3858:secret = a.shift();
+docs/spikes/non-elevated-job-object/transcript.txt:3862:secret = a.shift();\n
+docs/spikes/non-elevated-job-object/transcript.txt:3874:secret = a.shift();
+docs/spikes/non-elevated-job-object/transcript.txt:3878:secret = a.shift();\n
+docs/spikes/non-elevated-job-object/transcript.txt:3898:secret = a.shift();
+docs/spikes/non-elevated-job-object/transcript.txt:3899:secret = a.shift();
+docs/spikes/non-elevated-job-object/transcript.txt:3940:secret = |github_pat_|sk-ant-';
+docs/spikes/non-elevated-job-object/transcript.txt:3946:secret = |github_pat_|sk-ant-'
+docs/spikes/non-elevated-job-object/transcript.txt:3952:secret = |github_pat_|sk-ant-'
+docs/spikes/non-elevated-job-object/transcript.txt:3953:secret = |github_pat_|sk-ant-'"
+docs/spikes/non-elevated-job-object/transcript.txt:3958:secret = a.shift();
+docs/spikes/non-elevated-job-object/transcript.txt:3961:secret = |github_pat_|sk-ant-'
+docs/spikes/non-elevated-job-object/session-log.txt:1378:secret = a.shift();\n
+docs/spikes/non-elevated-job-object/session-log.txt:3397:secret = a.shift();
+docs/spikes/non-elevated-job-object/session-log.txt:3398:secret = a.shift();
+docs/spikes/non-elevated-job-object/session-log.txt:3488:secret = |github_pat_|sk-ant-';
+docs/spikes/non-elevated-job-object/session-log.txt:3539:secret = |github_pat_|sk-ant-'
+docs/spikes/non-elevated-job-object/session-log.txt:4314:secret = |github_pat_|sk-ant-'
+docs/spikes/non-elevated-job-object/session-log.txt:4395:secret = |github_pat_|sk-ant-'"
+docs/spikes/non-elevated-job-object/session-log.txt:4405:secret = |github_pat_|sk-ant-'"
+docs/spikes/non-elevated-job-object/session-log.txt:4405:secret = |github_pat_|sk-ant-';
+docs/spikes/non-elevated-job-object/session-log.txt:4407:secret = |github_pat_|sk-ant-';
+docs/spikes/non-elevated-job-object/session-log.txt:4408:secret = |github_pat_|sk-ant-'
+docs/spikes/non-elevated-job-object/session-log.txt:4409:secret = |github_pat_|sk-ant-'
+docs/spikes/non-elevated-job-object/session-log.txt:4420:secret = |github_pat_|sk-ant-'
+docs/spikes/non-elevated-job-object/session-log.txt:4445:secret = |github_pat_|sk-ant-'
+docs/spikes/non-elevated-job-object/session-log.txt:4454:secret = |github_pat_|sk-ant-'
+docs/spikes/non-elevated-job-object/session-log.txt:4503:secret = |github_pat_|sk-ant-'
+docs/spikes/non-elevated-job-object/code/t.cjs:19:secret = a.shift();
+
+### 2026-11-23T22:20:41.718Z -> 2026-11-23T22:20:42.060Z  host=laptop  runner pid 50815, child pid 50855 (created Mon Nov 23 16:20:41 2026), exit 0
+$ ["grep","-rnIoE","[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[a-z]{2,}","docs/spikes/non-elevated-job-object"]
+--- output ---
+docs/spikes/non-elevated-job-object/transcript.txt:2251:noreply@anthropic.com
+docs/spikes/non-elevated-job-object/transcript.txt:3049:noreply@anthropic.com
+docs/spikes/non-elevated-job-object/transcript.txt:3051:noreply@anthropic.com
+docs/spikes/non-elevated-job-object/transcript.txt:3969:noreply@anthropic.com
+docs/spikes/non-elevated-job-object/transcript.txt:3971:noreply@anthropic.com
+docs/spikes/non-elevated-job-object/transcript.txt:3973:noreply@anthropic.com
+docs/spikes/non-elevated-job-object/transcript.txt:3975:noreply@anthropic.com
+docs/spikes/non-elevated-job-object/transcript.txt:3976:noreply@anthropic.com
+docs/spikes/non-elevated-job-object/transcript.txt:3978:noreply@anthropic.com
+docs/spikes/non-elevated-job-object/transcript.txt:3980:noreply@anthropic.com
+docs/spikes/non-elevated-job-object/transcript.txt:3981:noreply@anthropic.com
+docs/spikes/non-elevated-job-object/transcript.txt:3983:noreply@anthropic.com
+docs/spikes/non-elevated-job-object/transcript.txt:3984:noreply@anthropic.com
+docs/spikes/non-elevated-job-object/transcript.txt:3986:noreply@anthropic.com
+docs/spikes/non-elevated-job-object/transcript.txt:3988:noreply@anthropic.com
+docs/spikes/non-elevated-job-object/transcript.txt:3989:noreply@anthropic.com
+docs/spikes/non-elevated-job-object/transcript.txt:3991:noreply@anthropic.com
+docs/spikes/non-elevated-job-object/transcript.txt:3992:noreply@anthropic.com
+docs/spikes/non-elevated-job-object/session-log.txt:812:noreply@anthropic.com
+docs/spikes/non-elevated-job-object/session-log.txt:3429:noreply@anthropic.com
+docs/spikes/non-elevated-job-object/session-log.txt:3483:noreply@anthropic.com
+docs/spikes/non-elevated-job-object/session-log.txt:3485:noreply@anthropic.com
+docs/spikes/non-elevated-job-object/session-log.txt:3545:noreply@anthropic.com
+docs/spikes/non-elevated-job-object/session-log.txt:3575:noreply@anthropic.com
+docs/spikes/non-elevated-job-object/session-log.txt:3585:noreply@anthropic.com
+docs/spikes/non-elevated-job-object/session-log.txt:3589:noreply@anthropic.com
+docs/spikes/non-elevated-job-object/session-log.txt:3689:noreply@anthropic.com
+docs/spikes/non-elevated-job-object/session-log.txt:3771:noreply@anthropic.com
+docs/spikes/non-elevated-job-object/session-log.txt:3865:noreply@anthropic.com
+docs/spikes/non-elevated-job-object/session-log.txt:4320:noreply@anthropic.com
+docs/spikes/non-elevated-job-object/session-log.txt:4457:noreply@anthropic.com
+docs/spikes/non-elevated-job-object/session-log.txt:4459:noreply@anthropic.com
+docs/spikes/non-elevated-job-object/session-log.txt:4512:noreply@anthropic.com
+docs/spikes/non-elevated-job-object/session-log.txt:4576:noreply@anthropic.com
+docs/spikes/non-elevated-job-object/session-log.txt:4632:noreply@anthropic.com

@@ -44,3 +44,6 @@ ABOUTME: Card #1458 laptop process record as written by the step runner t.cjs, o
 {"host":"laptop","pid":50228,"created":"Sun Nov 22 16:27:11 2026","recorded":"2026-11-22T22:27:11.814Z","by":50216,"what":"node","transcriptStart":"2026-11-22T22:27:11.810Z"}
 {"host":"laptop","pid":50250,"created":"Sun Nov 22 16:27:22 2026","recorded":"2026-11-22T22:27:22.129Z","by":50249,"what":"/Users/cjwilliams/GitHub/rigger/tools/coordinator/suite-slot.sh","transcriptStart":"2026-11-22T22:27:22.124Z"}
 {"host":"laptop","pid":62553,"created":"Sun Nov 22 16:35:21 2026","recorded":"2026-11-22T22:35:21.978Z","by":62552,"what":"/Users/cjwilliams/GitHub/rigger/tools/coordinator/suite-slot.sh","transcriptStart":"2026-11-22T22:35:21.975Z"}
+{"host":"laptop","pid":44190,"created":"Mon Nov 23 16:20:34 2026","recorded":"2026-11-23T22:20:34.133Z","by":44066,"what":"grep","transcriptStart":"2026-11-23T22:20:34.110Z"}
+{"host":"laptop","pid":47077,"created":"Mon Nov 23 16:20:37 2026","recorded":"2026-11-23T22:20:37.579Z","by":47017,"what":"grep","transcriptStart":"2026-11-23T22:20:37.568Z"}
+{"host":"laptop","pid":50855,"created":"Mon Nov 23 16:20:41 2026","recorded":"2026-11-23T22:20:41.730Z","by":50815,"what":"grep","transcriptStart":"2026-11-23T22:20:41.718Z"}

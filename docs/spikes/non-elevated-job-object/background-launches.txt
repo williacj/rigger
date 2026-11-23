@@ -42,3 +42,25 @@ holds about its processes. Nothing here was read from a process list afterwards.
 == The first rewrite into one masked commit: rows written by each process as it started ==
 host=laptop pid=11873 created=Sun Nov 22 21:03:06 2026     recorded=2026-11-23T03:03:06Z what=background shell
 host=laptop pid=11876 created=Sun Nov 22 21:03:06 2026     recorded=2026-11-23T03:03:06Z cmd=suite-slot.sh 1458-maker -- caffeinate -dims git commit
+
+== The amendments: rows written by each process as it started (the cmd text is fixed in the script and omits the options; each ran "git commit -q" with a message file, the last two with --amend) ==
+host=laptop pid=27936 created=Mon Nov 23 10:23:54 2026     recorded=2026-11-23T16:23:54Z what=background shell
+host=laptop pid=27954 created=Mon Nov 23 10:23:54 2026     recorded=2026-11-23T16:23:54Z cmd=suite-slot.sh 1458-maker -- caffeinate -dims git commit
+host=laptop pid=1580 created=Mon Nov 23 14:48:18 2026     recorded=2026-11-23T20:48:18Z what=background shell
+host=laptop pid=1705 created=Mon Nov 23 14:48:19 2026     recorded=2026-11-23T20:48:19Z cmd=suite-slot.sh 1458-maker -- caffeinate -dims git commit
+host=laptop pid=18838 created=Mon Nov 23 15:08:27 2026     recorded=2026-11-23T21:08:27Z what=background shell
+host=laptop pid=18880 created=Mon Nov 23 15:08:27 2026     recorded=2026-11-23T21:08:27Z cmd=suite-slot.sh 1458-maker -- caffeinate -dims git commit
+
+== The slot log for those three slot processes, as the slot wrote it ==
+2026-11-23T16:23:54Z event=wait label=1458-maker pid=27954 load=21.76 cwd=/Users/cjwilliams/GitHub/rigger-worktrees/1458-spike-engineer-clean cmd=caffeinate -dims git commit -q -F spikes/1458-spike-engineer/msg.txt
+2026-11-23T16:23:54Z event=queue label=1458-maker pid=27954 load=21.76 cwd=/Users/cjwilliams/GitHub/rigger-worktrees/1458-spike-engineer-clean cmd=caffeinate -dims git commit -q -F spikes/1458-spike-engineer/msg.txt ticket=1 ahead=0
+2026-11-23T16:32:36Z event=start label=1458-maker pid=27954 load=7.26 cwd=/Users/cjwilliams/GitHub/rigger-worktrees/1458-spike-engineer-clean cmd=caffeinate -dims git commit -q -F spikes/1458-spike-engineer/msg.txt
+2026-11-23T16:40:32Z event=end label=1458-maker pid=27954 load=5.58 cwd=/Users/cjwilliams/GitHub/rigger-worktrees/1458-spike-engineer-clean cmd=caffeinate -dims git commit -q -F spikes/1458-spike-engineer/msg.txt status=0 duration=476s
+2026-11-23T20:48:19Z event=wait label=1458-maker pid=1705 load=101.76 cwd=/Users/cjwilliams/GitHub/rigger-worktrees/1458-spike-engineer-clean cmd=caffeinate -dims git commit -q --amend -F spikes/1458-spike-engineer/msg.txt
+2026-11-23T20:48:19Z event=queue label=1458-maker pid=1705 load=101.76 cwd=/Users/cjwilliams/GitHub/rigger-worktrees/1458-spike-engineer-clean cmd=caffeinate -dims git commit -q --amend -F spikes/1458-spike-engineer/msg.txt ticket=1 ahead=0
+2026-11-23T20:54:31Z event=start label=1458-maker pid=1705 load=22.90 cwd=/Users/cjwilliams/GitHub/rigger-worktrees/1458-spike-engineer-clean cmd=caffeinate -dims git commit -q --amend -F spikes/1458-spike-engineer/msg.txt
+2026-11-23T21:08:11Z event=end label=1458-maker pid=1705 load=47.34 cwd=/Users/cjwilliams/GitHub/rigger-worktrees/1458-spike-engineer-clean cmd=caffeinate -dims git commit -q --amend -F spikes/1458-spike-engineer/msg.txt status=1 duration=820s
+2026-11-23T21:08:27Z event=wait label=1458-maker pid=18880 load=63.29 cwd=/Users/cjwilliams/GitHub/rigger-worktrees/1458-spike-engineer-clean cmd=caffeinate -dims git commit -q --amend -F spikes/1458-spike-engineer/msg.txt
+2026-11-23T21:08:27Z event=queue label=1458-maker pid=18880 load=63.29 cwd=/Users/cjwilliams/GitHub/rigger-worktrees/1458-spike-engineer-clean cmd=caffeinate -dims git commit -q --amend -F spikes/1458-spike-engineer/msg.txt ticket=5 ahead=3
+2026-11-23T21:49:53Z event=start label=1458-maker pid=18880 load=23.67 cwd=/Users/cjwilliams/GitHub/rigger-worktrees/1458-spike-engineer-clean cmd=caffeinate -dims git commit -q --amend -F spikes/1458-spike-engineer/msg.txt
+2026-11-23T21:59:14Z event=end label=1458-maker pid=18880 load=7.29 cwd=/Users/cjwilliams/GitHub/rigger-worktrees/1458-spike-engineer-clean cmd=caffeinate -dims git commit -q --amend -F spikes/1458-spike-engineer/msg.txt status=0 duration=561s

@@ -1,6 +1,6 @@
 # ABOUTME: Card #1458: turns the spike engineer's retained Claude Code session record (JSON lines) into a plain-text log of every tool
 # call, with its UTC issue and completion times, the host it acted on, its exact input and its full result, redacting other accounts.
-# [MASKED EDIT: 7 distinct names of processes, programs, services and accounts that are not the spike's own are replaced by "[name withheld]" in this file, under the owner's ruling 1458#7090273806. The file before this edit has its sha256 withheld for privacy and kept off-repo, and the script no longer runs as it did.]
+# [MASKED EDIT: 7 distinct names of processes, programs, services and accounts that are not the spike's own are replaced by "[name withheld]" in this file, under the owner's ruling 1458#7090273806. The file before this edit has its sha256 withheld for privacy and kept off-repo, and the script no longer runs as it did. A phrase that counted and described other people's accounts is reworded, in recorded commands, printed code and copied report text too; the report says where.]
 import json, re, sys
 src, dst = sys.argv[1], sys.argv[2]
 uses, results, order = {}, {}, []
