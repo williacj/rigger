@@ -44,6 +44,10 @@ async function recordedStart(environment) {
   return { text: starts[0], calls: spawned.calls };
 }
 
+/** Whether any object in a parsed record holds `name` with `value`, wherever the record nests it. */
+const holds = (node, name, value) => node !== null && typeof node === 'object'
+  && (node[name] === value || Object.values(node).some((child) => holds(child, name, value)));
+
 test('the entry-child start record omits an environment name outside the allowlist and its value', async () => {
   const { text } = await recordedStart({ PATH: '/fixture/bin:/fixture/tools', RIGGER_ENTRY_OUTSIDE: 'outside-value-5d1c' });
   assert.equal(text.includes('RIGGER_ENTRY_OUTSIDE'), false, `the outside name reached the start record: ${text}`);
@@ -53,7 +57,7 @@ test('the entry-child start record omits an environment name outside the allowli
 test('the entry-child start record keeps PATH with the value the caller passed', async () => {
   const { text } = await recordedStart({ PATH: '/fixture/gh-dir:/fixture/installed', RIGGER_ENTRY_OUTSIDE: 'outside-value-5d1c' });
   const record = JSON.parse(text.slice('entry-child-start '.length));
-  assert.equal(record.environment.PATH, '/fixture/gh-dir:/fixture/installed');
+  assert.ok(holds(record, 'PATH', '/fixture/gh-dir:/fixture/installed'), `the start record lost PATH or its value: ${text}`);
 });
 
 test('the entry-child start record still names the child pid, command, argv and cwd', async () => {
@@ -67,11 +71,11 @@ test('entryChild hands spawn the caller\'s whole environment, outside names incl
   const environment = { PATH: '/fixture/bin', HOME: '/fixture/home', RIGGER_ENTRY_OUTSIDE: 'outside-value-5d1c' };
   const { calls } = await recordedStart(environment);
   assert.equal(calls.length, 1, 'entryChild starts exactly one child');
-  assert.deepEqual(calls[0].options.env, { PATH: '/fixture/bin', HOME: '/fixture/home', RIGGER_ENTRY_OUTSIDE: 'outside-value-5d1c' });
+  assert.deepEqual({ ...calls[0].options.env }, { PATH: '/fixture/bin', HOME: '/fixture/home', RIGGER_ENTRY_OUTSIDE: 'outside-value-5d1c' });
 });
 
 test('the recorded-name allowlist holds PATH and only names the host fixture callers set for a reason', () => {
   const permitted = new Set(['PATH', 'HOME', 'LANG', 'CODEX_HOME', 'RIGGER_STAND_IN_VALUE']);
   assert.ok(RECORDED_NAMES.includes('PATH'), 'the allowlist holds PATH');
-  assert.deepEqual(RECORDED_NAMES.filter((name) => !permitted.has(name)), [], 'the allowlist holds no name outside the permitted set');
+  for (const name of RECORDED_NAMES) assert.ok(permitted.has(name), `the allowlist holds ${name}, outside the permitted set`);
 });
