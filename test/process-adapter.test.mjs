@@ -105,8 +105,9 @@ test('T11: the tracker reads every injected second and serializes a read that ou
       for (const failure of [false, true])
         for (const ending of ['before', 'after'])
           for (const late of [false, true])
-            for (const stoppedLate of late && ending === 'before' ? [false, true] : [false]) await t.test(
-            `${stoppedLate ? 'turnover after deadline; ' : ''}${kind}; B admitted ${admission}; ${failure ? 'failure' : 'success'}; A ends ${ending}; release ${late ? 'after' : 'before'} deadline`, async (t) => {
+            for (const stoppedLate of late && ending === 'before' ? [false, true] : [false])
+              for (const peerEnding of admission === 'after' ? ['after'] : ['before', 'after']) await t.test(
+            `${stoppedLate ? 'turnover after deadline; ' : ''}${kind}; B admitted ${admission}; ${failure ? 'failure' : 'success'}; A ends ${ending}; B ends ${peerEnding}; release ${late ? 'after' : 'before'} deadline`, async (t) => {
     const { EventEmitter } = await import('node:events');
     const { PassThrough } = await import('node:stream');
     const clock = manualClock(0);
@@ -220,6 +221,7 @@ test('T11: the tracker reads every injected second and serializes a read that ou
       finish(world.group); await turn(t);
     }
     if (admission === 'during' && ending === 'before') { await advance(stoppedLate ? deadline + 100 : began + 100); start(); await turn(t); }
+    if (peerEnding === 'before') { finish(b); await turn(t); }
     const released = deadline + (late ? 250 : -250);
     await advance(released);
     assert.equal(maxReads, 1, 'a whole-table read overlapped the held read');
@@ -228,7 +230,7 @@ test('T11: the tracker reads every injected second and serializes a read that ou
     // Cleanup may spend injected time before the overdue read actually starts.
     const settledRead = starts.at(-1);
     const periodicNeeded = (late && (ending === 'after' || admission !== 'after')) || (ending === 'before' && admission === 'during');
-    assert.equal(starts.length, 2 + (ending === 'before' ? 1 : 0) + (periodicNeeded ? 1 : 0), 'turnover queued duplicate periodic service');
+    if (peerEnding === 'after') assert.equal(starts.length, 2 + (ending === 'before' ? 1 : 0) + (periodicNeeded ? 1 : 0), 'turnover queued duplicate periodic service');
     if (ending === 'after') { await advance(released + 50); finish(world.group); await turn(t); }
     if (admission === 'after') {
       await advance(released + 100); start(); await turn(t);
@@ -237,16 +239,19 @@ test('T11: the tracker reads every injected second and serializes a read that ou
     assert.equal(maxTimers, 1, 'more than one periodic timer was pending');
     assert.equal(maxReads, 1, 'more than one whole-table read was in flight');
     assert.deepEqual(peerCancellations, [], 'an ending cancelled a running peer timer');
-    assert.equal(timers.size, 1, 'settlement did not arm exactly one periodic timer');
-    const turnover = ending === 'before' && admission === 'during';
-    const expectedDue = admission === 'after' ? released + 1100
-      : turnover ? settledRead + 1000 : late ? settledRead + 1000 : deadline;
-    assert.deepEqual([...timers.values()], [expectedDue], 'a final read or ending moved the shared period');
-    const before = starts.length;
-    await advance(expectedDue - 1);
-    assert.equal(starts.length, before, 'periodic service ran early');
-    await advance(expectedDue);
-    assert.equal(starts.length, before + 1, 'periodic service did not run exactly once at its deadline');
+    if (live.size === 0) assert.equal(timers.size, 0, 'the last ending retained periodic service');
+    else {
+      assert.equal(timers.size, 1, 'settlement did not arm exactly one periodic timer');
+      const turnover = ending === 'before' && admission === 'during';
+      const expectedDue = admission === 'after' ? released + 1100
+        : turnover ? settledRead + 1000 : late ? settledRead + 1000 : deadline;
+      assert.deepEqual([...timers.values()], [expectedDue], 'a final read or ending moved the shared period');
+      const before = starts.length;
+      await advance(expectedDue - 1);
+      assert.equal(starts.length, before, 'periodic service ran early');
+      await advance(expectedDue);
+      assert.equal(starts.length, before + 1, 'periodic service did not run exactly once at its deadline');
+    }
     finish(b);
     await Promise.all(runs);
     for (const group of [world.group, b, ...(kind === 'final' ? [c] : [])]) {
