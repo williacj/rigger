@@ -104,8 +104,9 @@ test('T11: the tracker reads every injected second and serializes a read that ou
     for (const admission of ['before', 'during', 'after'])
       for (const failure of [false, true])
         for (const ending of ['before', 'after'])
-          for (const late of [false, true]) await t.test(
-            `${kind}; B admitted ${admission}; ${failure ? 'failure' : 'success'}; A ends ${ending}; release ${late ? 'after' : 'before'} deadline`, async (t) => {
+          for (const late of [false, true])
+            for (const stoppedLate of late && ending === 'before' ? [false, true] : [false]) await t.test(
+            `${stoppedLate ? 'turnover after deadline; ' : ''}${kind}; B admitted ${admission}; ${failure ? 'failure' : 'success'}; A ends ${ending}; release ${late ? 'after' : 'before'} deadline`, async (t) => {
     const { EventEmitter } = await import('node:events');
     const { PassThrough } = await import('node:stream');
     const clock = manualClock(0);
@@ -212,8 +213,13 @@ test('T11: the tracker reads every injected second and serializes a read that ou
     if (kind === 'final') { await advance(began); finish(c); await turn(t); }
     else await advance(began);
     assert.equal(typeof release, 'function', 'the chosen read was not held');
-    if (ending === 'before') { await advance(began + 50); finish(world.group); await turn(t); }
-    if (admission === 'during') { await advance(began + 100); start(); await turn(t); }
+    if (admission === 'during' && ending === 'after') { await advance(began + 100); start(); await turn(t); }
+    if (stoppedLate) await advance(deadline);
+    if (ending === 'before') {
+      await advance(stoppedLate ? deadline + 50 : began + 50);
+      finish(world.group); await turn(t);
+    }
+    if (admission === 'during' && ending === 'before') { await advance(stoppedLate ? deadline + 100 : began + 100); start(); await turn(t); }
     const released = deadline + (late ? 250 : -250);
     await advance(released);
     assert.equal(maxReads, 1, 'a whole-table read overlapped the held read');
@@ -221,6 +227,8 @@ test('T11: the tracker reads every injected second and serializes a read that ou
     await turn(t);
     // Cleanup may spend injected time before the overdue read actually starts.
     const settledRead = starts.at(-1);
+    const periodicNeeded = (late && (ending === 'after' || admission !== 'after')) || (ending === 'before' && admission === 'during');
+    assert.equal(starts.length, 2 + (ending === 'before' ? 1 : 0) + (periodicNeeded ? 1 : 0), 'turnover queued duplicate periodic service');
     if (ending === 'after') { await advance(released + 50); finish(world.group); await turn(t); }
     if (admission === 'after') {
       await advance(released + 100); start(); await turn(t);

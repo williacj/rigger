@@ -186,6 +186,8 @@ function trackerOf(host) {
 /** All reads serve running dispatches; a final read queues without moving periodic service. */
 function scan(host, dispatches) {
   const tracker = trackerOf(host);
+  // A queued periodic read also serves a dispatch admitted after an idle interval.
+  if (dispatches === undefined && tracker.queue.some((request) => request.dispatches === undefined)) return;
   return new Promise((resolve) => {
     tracker.queue.push({ dispatches, resolve });
     serviceTracker(host);

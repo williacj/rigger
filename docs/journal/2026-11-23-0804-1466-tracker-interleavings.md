@@ -30,6 +30,13 @@ uses the observed overdue read's start, without moving a future deadline. All
 failed originals remain in the 1466-r3-matrix logs; none earns passing credit.
 The unchanged judge probes passed after the source correction.
 
+The late-release cells also put A's end after the periodic deadline, before B
+starts while the final read remains held. Both success and failure cases first
+reported five reads where four were required (1466-r3-queue-red.log). The state
+machine now coalesces queued periodic service with a newly admitted first read.
+The expanded matrix passes in 1466-r3-queue-green.log. This closes the queue's
+turnover boundary as well as the timer's ownership boundary before publication.
+
 The renewed fault search enumerated every tracker scheduling and observation
 path, including synchronous exit reads. Consumer inventories cover suite lists,
 network pins, fake-gh, in-process fixtures and the generated matrix. No required
