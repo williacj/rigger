@@ -109,14 +109,23 @@ test('each recorded environment name maps to the value the caller passed for it'
 });
 
 test('the recorded environment\'s names are exactly the recorded names the caller held', async () => {
-  const caller = { PATH: '/fixture/bin', HOME: '/fixture/home', ...OUTSIDE };
-  const held = Object.keys(caller).filter((name) => RECORDED_NAMES.includes(name)).sort();
-  assert.ok(Object.keys(caller).some((name) => !RECORDED_NAMES.includes(name)), 'premise: the caller holds a name outside the list');
-  assert.ok(held.length > 0, 'premise: the caller holds a name inside the list');
-  assert.ok(recordedNames().some((name) => !Object.hasOwn(caller, name)), 'premise: the caller lacks a name inside the list');
-  const { environment } = parsed((await recordedStart(caller)).text);
-  assert.ok(environment !== null && typeof environment === 'object' && !Array.isArray(environment), 'environment is a JSON object');
-  assert.deepEqual(Object.keys(environment).sort(), held);
+  // Callers holding PATH alone, PATH and HOME, and all five permitted names, each beside an outside
+  // name: whichever permitted names the list holds, one caller meets the item's premises, and every
+  // name the list holds is held by some caller, so a dropped one is seen.
+  const callers = [
+    { PATH: '/fixture/bin', ...OUTSIDE },
+    { PATH: '/fixture/bin', HOME: '/fixture/home', ...OUTSIDE },
+    { PATH: '/fixture/bin', HOME: '/fixture/home', LANG: 'C.fixture', CODEX_HOME: '/fixture/codex', RIGGER_STAND_IN_VALUE: 'stand-in-fixture', ...OUTSIDE },
+  ];
+  const heldBy = (caller) => Object.keys(caller).filter((name) => RECORDED_NAMES.includes(name)).sort();
+  assert.ok(callers.some((caller) => Object.keys(caller).some((name) => !RECORDED_NAMES.includes(name))
+    && heldBy(caller).length > 0 && recordedNames().some((name) => !Object.hasOwn(caller, name))),
+  'premise: some caller holds a name outside the list, a name inside it, and lacks another inside it');
+  for (const caller of callers) {
+    const { environment } = parsed((await recordedStart(caller)).text);
+    assert.ok(environment !== null && typeof environment === 'object' && !Array.isArray(environment), 'environment is a JSON object');
+    assert.deepEqual(Object.keys(environment).sort(), heldBy(caller));
+  }
 });
 
 test('entryChild hands spawn the caller\'s whole environment, outside names included', async () => {
@@ -128,15 +137,9 @@ test('entryChild hands spawn the caller\'s whole environment, outside names incl
   assert.deepEqual(delivered, { PATH: '/fixture/bin', HOME: '/fixture/home', RIGGER_ENTRY_OUTSIDE: 'outside-value-5d1c' });
 });
 
-test('RECORDED_NAMES is an exported array of strings', () => {
+test('RECORDED_NAMES is an exported array of strings holding PATH and no name outside the permitted five', () => {
   assert.ok(Array.isArray(RECORDED_NAMES), 'RECORDED_NAMES is an array');
   for (const name of recordedNames()) assert.equal(typeof name, 'string', 'every element is a string');
-});
-
-test('RECORDED_NAMES holds PATH', () => {
-  assert.ok(RECORDED_NAMES.includes('PATH'));
-});
-
-test('RECORDED_NAMES holds no name outside PATH, HOME, LANG, CODEX_HOME and RIGGER_STAND_IN_VALUE', () => {
+  assert.ok(RECORDED_NAMES.includes('PATH'), 'RECORDED_NAMES holds PATH');
   for (const name of recordedNames()) assert.ok(PERMITTED.has(name), `RECORDED_NAMES holds ${name}, outside the permitted set`);
 });
