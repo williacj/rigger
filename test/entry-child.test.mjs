@@ -110,17 +110,20 @@ test('each recorded environment name maps to the value the caller passed for it'
 
 test('the recorded environment\'s names are exactly the recorded names the caller held', async () => {
   // Callers holding PATH alone, PATH and HOME, and all five permitted names, each beside an outside
-  // name: whichever permitted names the list holds, one caller meets the item's premises, and every
-  // name the list holds is held by some caller, so a dropped one is seen.
+  // name. Every name the list may hold is held by some caller, so a dropped one is seen. Where the
+  // list holds a name besides PATH, a caller also meets the item's premises; a list of PATH alone
+  // admits no caller lacking a listed name, so that premise is asserted only where it can hold.
   const callers = [
     { PATH: '/fixture/bin', ...OUTSIDE },
     { PATH: '/fixture/bin', HOME: '/fixture/home', ...OUTSIDE },
     { PATH: '/fixture/bin', HOME: '/fixture/home', LANG: 'C.fixture', CODEX_HOME: '/fixture/codex', RIGGER_STAND_IN_VALUE: 'stand-in-fixture', ...OUTSIDE },
   ];
   const heldBy = (caller) => Object.keys(caller).filter((name) => RECORDED_NAMES.includes(name)).sort();
-  assert.ok(callers.some((caller) => Object.keys(caller).some((name) => !RECORDED_NAMES.includes(name))
-    && heldBy(caller).length > 0 && recordedNames().some((name) => !Object.hasOwn(caller, name))),
-  'premise: some caller holds a name outside the list, a name inside it, and lacks another inside it');
+  if (recordedNames().some((name) => name !== 'PATH')) {
+    assert.ok(callers.some((caller) => Object.keys(caller).some((name) => !RECORDED_NAMES.includes(name))
+      && heldBy(caller).length > 0 && recordedNames().some((name) => !Object.hasOwn(caller, name))),
+    'premise: some caller holds a name outside the list, a name inside it, and lacks another inside it');
+  }
   for (const caller of callers) {
     const { environment } = parsed((await recordedStart(caller)).text);
     assert.ok(environment !== null && typeof environment === 'object' && !Array.isArray(environment), 'environment is a JSON object');
