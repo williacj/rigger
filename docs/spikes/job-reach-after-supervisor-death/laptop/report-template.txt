@@ -726,15 +726,38 @@ full output as the tool returned it:
 | 145 | entry 46's command, marked as an error | the `grep -c` exit 1 above |
 | 150 | an edit to the session-log generator, stopped | a safety classifier stopped the response that made it. The edit was not applied: the next call shows the generator unchanged. Its input is withheld (see "The session log") |
 
-The commit hook ran the repository's suite on each commit attempt. It refused three before the one
-that landed. Each refusal's failure section is committed in full, from the hook's `failing tests`
-line to its end, with the sha256 of the whole log, which was 6 to 10 MB and is not committed:
+The commit hook ran the repository's suite on each commit attempt. In round 1 it refused three before
+the one that landed. Each refusal's failure section is committed, from the hook's `failing tests`
+line to its end, with the sha256 of the whole log, which was 6 to 10 MB and is kept off-repo. I wrote
+these summaries on the coordinator's instruction, before any ruling allowed them. The owner has since
+ruled that, for refused commits and CI only, a summary, the failing sections and the full log's
+checksum are enough:
+[1459#7115125345](https://github.com/williacj/rigger/issues/1459#issuecomment-7115125345), with a
+pointer on this card at
+[1460#7115125720](https://github.com/williacj/rigger/issues/1460#issuecomment-7115125720). The spike's
+own failed runs are still given in full.
 
 | Attempt | Why it was refused | Failure section |
 |---|---|---|
 | 1 | 75 tests failed, most of them test files that failed to load: my worktree had no node_modules, so `acorn` was missing. I ran `npm ci` | `docs/spikes/job-reach-after-supervisor-death/laptop/commit-refusal-1.txt` |
 | 2 | the report quoted the first credential scan's file-and-line output, which the document check refuses; and the L7 test in `test/loop.test.mjs` timed out | `docs/spikes/job-reach-after-supervisor-death/laptop/commit-refusal-2.txt` |
 | 3 | the L7 test timed out again, at a load average of about 24 to 30. It passed 3 of 3 times alone, and in the next full run | `docs/spikes/job-reach-after-supervisor-death/laptop/commit-refusal-3.txt` |
+
+Since then, round 2's commit and the three commits of the rewritten branch each passed the suite at
+the first attempt. One command that held a commit was refused before anything ran, by the harness's
+own hook: it also created and deleted a scratch branch, and deleting a branch is the owner's. The
+hook's whole output was `AGENTS.md reserves this to the owner: deleting a branch. Ask, rather than
+working around it.` The command was run again without that step.
+
+Three CI jobs failed on the pull request. Their failing sections and the whole logs' checksums are in
+`docs/spikes/job-reach-after-supervisor-death/laptop/ci-failures.txt`:
+
+| Head | Jobs | What failed |
+|---|---|---|
+| an earlier head, kept off-repo | broad deferred (26) | CI's own policy step: `current source or required tier result did not verify`. Its fast job had passed |
+| the rewritten branch's first pushed head | fast and check (26), in run 45275180485 | CI's own policy step: `worker source/mode verification failed`, then `current source or required tier result did not verify`. A second run at the same head, 45275189794, passed |
+
+Why CI's policy step refused them is not established here.
 
 ## Custody
 
@@ -890,8 +913,8 @@ next step. The members' and conhost.exe entries were all written before the supe
 
   The first six reported completion before entry 46's listing. The seventh was launched after it,
   and reported completion before entry 52's.
-- The commits of the clean branch, the one this report is in and the one it replaced, also ran in the
-  background. Each launching shell is recorded at its start, in
+- Three commits of the rewritten branch, the one that was pushed and the two it replaced, ran in the
+  background, and so did the follow-up commit this report is in. Each launching shell is recorded at its start, in
   `docs/spikes/job-reach-after-supervisor-death/laptop/process-record-laptop.txt`, and the same pid
   then becomes suite-slot.sh through `exec`. The processes the hook starts under it are not recorded
   one by one, which is the same gap.
