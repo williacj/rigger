@@ -205,4 +205,6 @@ test('a refusal holds no entry, whatever the place or the words around it would 
   }
   assert.equal(refusalLine('C1', place, 2, entriesOf('com' + 'mit')), 'refused: C1 #2.');
   assert.equal(refusalLine('C1', place, 2, entriesOf('com' + 'mit', 'ref' + 'used')), 'C1 #2');
+  const covering = entriesOf('com' + 'mit', 'ref' + 'used', 'c5 ' + '#', '#12' + '34', '123' + '4');
+  assert.equal(refusalLine('C5', place, 1234, covering), 'C5\n#\n123\n4');
 });

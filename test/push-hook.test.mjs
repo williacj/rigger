@@ -328,6 +328,8 @@ test('a list entry is refused in every place a push publishes', () => {
   writeFileSync(named.list, `${ENTRY}\n${word}\n`);
   assert.ok(!named.push('origin', 'topic').stderr.split('\n').some((line) => /\bC5\b/.test(line) && line.includes(word)), 'the refusal printed an entry in its own words');
   refuses(named, 'C5');
+  writeFileSync(named.list, `${ENTRY}\n${word}\n${['C5', '#1'].join(' ')}\n`);
+  refuses(named, 'C5', undefined, /^C5\n#\n1\n/m);
 });
 
 // D29 reason: wiring; which lines a merge adds is proved in test/push-content.test.mjs.
