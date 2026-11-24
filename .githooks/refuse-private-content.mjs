@@ -118,13 +118,12 @@ export function listState(bytes) {
   let text;
   try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes); }
   catch { return { refusal: 'the private list is not UTF-8' }; }
-  const entries = text.split(/\r\n|\n|\r/).map((line) => folded(line.trim()))
-    .filter((line) => line !== '' && !line.startsWith('#')).map((line) => ({ text: line }));
-  if (entries.length === 0) return { refusal: 'the private list holds no entry' };
-  if (entries.some((entry) => [...entry.text].length < 4)) {
-    return { refusal: 'the private list holds an entry under four characters' };
-  }
-  return { entries };
+  const lines = text.split(/\r\n|\n|\r/).map((line) => line.trim().normalize('NFC'))
+    .filter((line) => line !== '' && !line.startsWith('#'));
+  if (lines.length === 0) return { refusal: 'the private list holds no entry' };
+  // Before folding, which can lengthen a line.
+  if (lines.some((line) => [...line].length < 4)) return { refusal: 'the private list holds an entry under four characters' };
+  return { entries: lines.map((line) => ({ text: folded(line) })) };
 }
 
 /** The rows a line of text falls in, of C1, C2, C3 and C5. */
@@ -157,12 +156,18 @@ const LIMIT = 500_000;
 export const oversize = (path, size, parentSizes) => EVIDENCE.test(path) && size > LIMIT
   && !parentSizes.some((held) => held >= size);
 
-/** A commit's or tag's identity lines, and the rest of its text, a merged tag's included. */
+/**
+ * A commit's or tag's identity lines, and the rest of its text, a merged tag's included. Each is
+ * read in every encoding, and in the one a commit declares besides, so none it declares hides it.
+ */
 export function commitParts(bytes) {
-  const declared = /^encoding (\S+)$/m.exec(bytes.toString('latin1').split('\n\n', 1)[0])?.[1];
-  let decoder = lossy['utf-8'];
-  try { if (declared) decoder = new TextDecoder(declared); } catch { /* an unknown label reads as UTF-8 */ }
-  return partsOf(decoder.decode(bytes));
+  const object = bytes.toString('latin1');
+  const decoders = Object.values(lossy);
+  const declared = /^encoding (\S+)$/m.exec(object.split('\n\n', 1)[0])?.[1];
+  try { if (declared) decoders.push(new TextDecoder(declared)); } catch { /* an unknown label adds no reading */ }
+  const read = (piece) => decoders.map((decoder) => decoder.decode(Buffer.from(piece, 'latin1')));
+  const { identities, texts } = partsOf(object);
+  return { identities: identities.flatMap(read), text: texts.flatMap(read).join('\n') };
 }
 
 function partsOf(object) {
@@ -178,10 +183,10 @@ function partsOf(object) {
     else if (name === 'mergetag') {
       const merged = partsOf(value);
       identities.push(...merged.identities);
-      texts.push(merged.text);
+      texts.push(...merged.texts);
     } else texts.push(header);
   }
-  return { identities, text: texts.join('\n') };
+  return { identities, texts };
 }
 
 /** A path as a refusal may print it: never one that holds what the check refuses. */
@@ -195,11 +200,13 @@ const ROWS = {
   C1: 'an account id', C2: 'an email address', C3: 'a process-table header', C4: 'an oversized evidence file', C5: 'an entry of the private list',
 };
 
+/** The first wording, and so the fullest, that holds no entry of the list. */
+const wording = (entries, ...wordings) => wordings.find((text) => !entries.some((entry) => folded(text).includes(entry.text))) ?? '';
+
 /** One refusal: its row and its place, in the fullest words that hold no entry of the list. */
-export function refusalLine(row, place, ordinal, entries) {
-  const holdsAny = (text) => entries.some((entry) => folded(text).includes(entry.text));
-  return [`${row}, ${ROWS[row]}: ${place}`, `${row}: ${place}`, `${row} #${ordinal}`].find((text) => !holdsAny(text)) ?? row;
-}
+export const refusalLine = (row, place, ordinal, entries) => wording(
+  entries, `refused: ${row}, ${ROWS[row]}: ${place}.`, `refused: ${row}: ${place}.`, `refused: ${row} #${ordinal}.`, `${row} #${ordinal}`,
+);
 
 /** The updates a push asks for, its deletions left out, from what git hands the hook. */
 export function updatesIn(text) {
@@ -344,18 +351,23 @@ function readList() {
 
 /** Why this push is refused, one line each. */
 function refusals(defaultRef) {
-  const updates = updatesIn(readFileSync(0, 'utf8'));
-  if (updates.length === 0) return [];
-  const list = readList();
-  if (list.refusal) return [list.refusal];
-  const distinct = new Map(findings(updates, defaultRef, list.entries).map((found) => [`${found.row} ${found.place}`, found]));
-  return [...distinct.values()].map(({ row, place }, index) => refusalLine(row, place, index + 1, list.entries));
+  let entries = [];
+  try {
+    const updates = updatesIn(readFileSync(0, 'utf8'));
+    if (updates.length === 0) return [];
+    const list = readList();
+    if (list.refusal) return [`refused: ${list.refusal}.`];
+    entries = list.entries;
+    const distinct = new Map(findings(updates, defaultRef, entries).map((found) => [`${found.row} ${found.place}`, found]));
+    return [...distinct.values()].map(({ row, place }, index) => refusalLine(row, place, index + 1, entries));
+  } catch (error) {
+    const reason = error instanceof Unchecked ? error.message : 'the check failed';
+    return [wording(entries, `refused: the push could not be checked: ${reason}.`, 'refused.')];
+  }
 }
 
 if (import.meta.main) {
-  let lines;
-  try { lines = refusals(process.argv[2]); }
-  catch (error) { lines = [`the push could not be checked: ${error instanceof Unchecked ? error.message : 'the check failed'}`]; }
-  for (const line of lines) process.stderr.write(`refused: ${line}.\n`);
+  const lines = refusals(process.argv[2]);
+  for (const line of lines) process.stderr.write(`${line}\n`);
   if (lines.length > 0) process.exitCode = 1;
 }

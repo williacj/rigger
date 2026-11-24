@@ -112,7 +112,7 @@ test('the list trims its lines, skips blank and comment lines, and names the sta
   for (const [bytes, state] of [
     [Buffer.from(''), /no entry/], [Buffer.from('# only\n \n'), /no entry/],
     [Buffer.from(`${bank}\n${fir}\n`), /under four characters/], [Buffer.from(`${'\u{1f332}'.repeat(3)}\n${fern}`), /under four characters/],
-    [Buffer.from([...Buffer.from(fern), 0xff]), /not UTF-8/],
+    [Buffer.from(['a', 'b'].join('\u00df')), /under four characters/], [Buffer.from([...Buffer.from(fern), 0xff]), /not UTF-8/],
   ]) {
     const answer = listState(bytes);
     assert.match(answer.refusal, state);
@@ -159,9 +159,22 @@ test('a commit and a tag give their identities apart from their text, a nested t
   const raw = ['tree 1', 'parent 2', `author Ana Fern <${at('ana', 'post.zone')}> 1 +0000`, `committer Bo Moss <${at('bo', 'post.zone')}> 1 +0000`,
     'gpgsig -----BEGIN', ' body', 'mergetag object 3', ' type commit', ' tag v1', ` tagger Cy Reed <${at('cy', 'post.zone')}> 1 +0000`, ' ', ' tag words', 'note extra', '', 'subject', '', 'body', ''].join('\n');
   const { identities, text } = commitParts(Buffer.from(raw));
-  assert.deepEqual(identities.map((line) => line.split(' <')[0]), ['Ana Fern', 'Bo Moss', 'Cy Reed']);
+  assert.deepEqual(identities.filter((line) => line.includes(' <')).map((line) => line.split(' <')[0]), ['Ana Fern', 'Bo Moss', 'Cy Reed']);
   for (const line of ['subject', 'body', 'tag words', 'note extra']) assert.ok(text.split('\n').includes(line), line);
   assert.doesNotMatch(text, /@/);
+});
+
+test('an encoding a commit declares adds a reading and hides none', () => {
+  const entries = entriesOf(QUILL, MARSH);
+  const commit = (encoding, message) => Buffer.concat([Buffer.from(`tree 1\nauthor ${QUILL} <a> 1 +0000\nencoding ${encoding}\n\n`), message]);
+  const rows = ({ text }) => [...new Set(text.split(/\r?\n/).flatMap((line) => rowsIn(line, entries)))];
+  for (const encoding of ['utf-16le', 'utf-16be', 'no-such-label', 'utf-7']) {
+    const parts = commitParts(commit(encoding, Buffer.from(`by ${QUILL}\n`)));
+    assert.deepEqual(rows(parts), ['C5'], encoding);
+    assert.ok(parts.identities.some((line) => rowsIn(line, entries).includes('C5')), encoding);
+  }
+  assert.deepEqual(rows(commitParts(commit('iso-8859-1', Buffer.from(`${MARSH}\n`, 'latin1')))), ['C5']);
+  assert.deepEqual(rows(commitParts(commit('utf-8', Buffer.from(`by ${QUILL}\n`, 'utf16le')))), ['C5']);
 });
 
 test('a place prints a path only where the path holds nothing the check refuses', () => {
@@ -184,11 +197,12 @@ test('an update line is a deletion, an update, or a reason to refuse', () => {
 
 test('a refusal holds no entry, whatever the place or the words around it would hold', () => {
   const place = 'commit 7b06c5b96d83, "notes.txt" line 1';
-  assert.match(refusalLine('C5', place, 2, entriesOf(QUILL)), /^C5, an entry of the private list: commit 7b06c5b96d83/);
-  for (const entry of ['7b06c5b9' + '6d83', 'b06' + 'c', 'no' + 'tes', 'COM' + 'MIT', 'pri' + 'vate', 'li' + 'ne']) {
+  assert.match(refusalLine('C5', place, 2, entriesOf(QUILL)), /^refused: C5, an entry of the private list: commit 7b06c5b96d83/);
+  for (const entry of ['7b06c5b9' + '6d83', 'b06' + 'c', 'no' + 'tes', 'COM' + 'MIT', 'pri' + 'vate', 'li' + 'ne', 'ref' + 'used']) {
     const line = refusalLine('C5', place, 2, entriesOf(entry));
-    assert.match(line, /^C5\b/);
+    assert.match(line, /\bC5\b/);
     assert.ok(!line.toLowerCase().includes(entry.toLowerCase()), entry);
   }
-  assert.equal(refusalLine('C1', place, 2, entriesOf('pla' + 'ce', 'com' + 'mit')), 'C1 #2');
+  assert.equal(refusalLine('C1', place, 2, entriesOf('com' + 'mit')), 'refused: C1 #2.');
+  assert.equal(refusalLine('C1', place, 2, entriesOf('com' + 'mit', 'ref' + 'used')), 'C1 #2');
 });
