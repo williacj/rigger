@@ -41,9 +41,8 @@ final verdict.
 **3. Find the documents that own what changed.** For every changed behaviour, name the document
 that owns it, and read them in the order `AGENTS.md`'s "What binds" table sets — the README's
 CLI contract, then `docs/spec/requirements.md`, then `ARCHITECTURE.md`, then
-`docs/spec/decisions.md`. That order is the argument; reordering it costs you. While building
-v0, and where the repository defines it, `docs/v0-build-plan.md` carries this work's milestone
-and its exit conditions; read those too.
+`docs/spec/decisions.md`. While building v0, and where the repository defines it,
+`docs/v0-build-plan.md` carries this work's milestone and its exit conditions; read those too.
 
 **4. Verify yourself.** Independently run required/relevant checks; apply [TDD](../tdd/SKILL.md)
 to exact commands/results. Maker reports are context, never proof; read acceptance/implementation.
@@ -191,11 +190,18 @@ Say when you found a finding by reading alone.
 State the outcome required, not a patch, unless the binding source fixes the mechanism too. The
 maker owns the fix and chooses how (`R-LOOP-3`).
 
-Separate what blocks from what does not, and do not pad. A long list of preferences buries the
-one thing that must change. A finding a maker cannot act on is not a finding.
+Separate what blocks from what does not, and do not pad. A finding a maker cannot act on is not a
+finding.
 
 Authority comes from Rigger's documents and from what you can observe, never from who is making
 the claim — including when the claim is the maker's, or the owner's, or your own prior round's.
+
+A verdict on private material gives of it only the id, the item's ordinal, and "establishes" or
+"does not establish", as `docs/host-bootstrap.md`, "Spikes on a personal machine", says. This is
+an exception to "Findings", to step 7, and to "What you return", item 2.
+
+For a spike card that adopts that section, and no other card, these block: a missing privacy check,
+one whose SHA is not the judged head, one posted after that head was pushed, and one edited since.
 
 ## When you are not sure
 

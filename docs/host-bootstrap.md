@@ -1,8 +1,9 @@
-<!-- ABOUTME: Sets up a supported macOS host for both Rigger test tiers and agent dispatch. -->
+<!-- ABOUTME: Sets up a supported macOS host for both Rigger test tiers and agent dispatch, and
+     states what a spike may collect and publish from a host it uses, on any operating system. -->
 
-# Bootstrap a Rigger macOS host
+# Bootstrap a Rigger macOS host, and use any host for a spike
 
-This guide sets up a macOS host to run `npm test` and `npm run test:host` and to run makers and judges. The coordinator remains on the primary host, and owner markers are posted from the primary host ([K31](https://github.com/williacj/rigger/issues/740#issuecomment-6290234702)). The product route for an owner verdict is `rigger verdict` from an installed, promoted engine version that implements that verb. The live gate pin below is the installation reference for the existing engine steps; a version at that pin does not thereby supply `verdict`. Do not promote the pin silently.
+This guide sets up a macOS host to run `npm test` and `npm run test:host` and to run makers and judges, and it states what a spike may collect and publish on a host it uses that is a personal machine, whatever that host's operating system. The coordinator remains on the primary host, and owner markers are posted from the primary host ([K31](https://github.com/williacj/rigger/issues/740#issuecomment-6290234702)). The product route for an owner verdict is `rigger verdict` from an installed, promoted engine version that implements that verb. The live gate pin below is the installation reference for the existing engine steps; a version at that pin does not thereby supply `verdict`. Do not promote the pin silently.
 
 The [README prerequisites](../README.md#prerequisites) own the Node floor and supported host. Use a supported Node 26 runtime for this repository's verification. The historical versions in the next table were measured on 2026-10-19 on host key `macos-27.0.1-arm64-node26`, as recorded in [#816 Part 4, §9](https://github.com/williacj/rigger/issues/816#issuecomment-6291030802). They are observations of that host on that date, not current prerequisites.
 
@@ -198,3 +199,66 @@ ps -axo pid=,command= | grep -E '([c]odex-(maker|judge|resume|retry)[.]sh|[s]uit
 ~~~
 
 No matching script may be running when you pull. From `~/GitHub/rigger`, run `git pull --ff-only` only after that check shows no matches. A process the session did not start belongs to the owner; do not stop it to make a pull possible.
+
+## Spikes on a personal machine
+
+This guide binds nobody by itself. The spike engineer's prompt and the acceptance and code-review
+skills say their part is done as this section says, and a spike card adopts it.
+
+1. **Terms.** A personal machine is a host a person signs in to. Private content is an identifier
+   of a person, account, device, network or organisation, and any record of a process, service,
+   file or setting the spike did not start or make. An identifier is private inside the spike's
+   own rows and paths too. These are publishable:
+   - operating-system and tool versions, and the architecture;
+   - the host key `npm run test:host` prints;
+   - facts the card predeclares;
+   - this repository's owner and name, the logins that work on it, and the commit identity the
+     owner configured;
+   - public product and vendor names.
+2. **Collection.** This rule binds the output of a command run to make evidence or to look at the
+   host. The filter runs inside the command, so nothing unfiltered reaches a file, the terminal or
+   the agent's context. A private identifier in the spike's own record becomes a fixed placeholder
+   as it is captured. That breaks no acceptance item that asks for a command or an output exactly.
+   No listing of a host's processes, services, accounts or directories is captured at all.
+3. **Leftover check.** It reports a count of matches. It also reports the recorded pid, start time
+   and exit of each process the spike recorded at its start.
+4. **Archive.** The spike's captured records are kept on the owner's laptop, held by the owner,
+   with owner-only permissions, in no repository.
+   - A capture on the laptop goes straight to the archive.
+   - A capture on another host waits in a private directory outside every checkout. It is copied
+     to the archive and read back there. The maker then removes it from that host, before the
+     first push.
+   - The archive is kept until the card's final independent ruling or the card's longer event.
+   - Verification receipts stay under the [TDD skill](../.claude/skills/tdd/SKILL.md).
+5. **Limit of the permissions.** Agents run as the owner's account (`R-SAFE-4`), so the
+   permissions do not hold them out. The maker opens the archive only to write and read back its
+   own capture. A checker or judge opens it only for an item it was given. A judge may ask, by
+   rule 11's channel, for any other item of that card's (`R-EVIDENCE-2`).
+6. **A judge's access.** The owner grants it through the coordinator. It is never posted, and it is
+   shown to work before judging. A card that uses private material is judged by hand, on the laptop.
+7. **Private material.** It is captured records, never an agent session's transcript or its log
+   (`R-EVIDENCE-4`).
+8. **Naming it.** The report lists each private item by a sequential id and the acceptance items it
+   supports, and by nothing else. A judge's verdict gives of one only that id, the acceptance
+   item's ordinal, and "establishes" or "does not establish".
+9. **Privacy check.** Someone who is neither the maker nor a judge of the card makes it, before the
+   branch's first push. An image, archive or encoded blob is opened or removed. The checker reads
+   each of these, for each class of private content in rule 1:
+   - every file as committed;
+   - each commit message, and the branch name;
+   - the author, committer and tagger fields, of which only the configured identity passes;
+   - the drafts of the pull request's title, body and report.
+10. **Its result.** The result is a comment on the card, posted only on a pass. It gives the head's
+    SHA and the reader's role. Each later head has a result before it is pushed, which reads what
+    is new since the head that last passed. The pull request's text as posted equals the draft. A
+    push's time is read from the forge's activity record, `gh api repos/{owner}/{repo}/activity`.
+11. **Private channel.** A maker, checker or judge who finds private content stops, and tells the
+    coordinator in a message that is not posted. The coordinator takes it to the owner's
+    interactive session.
+    - A maker's message is its escalation, category `critical`. A maker never redacts and continues.
+    - A judge's message is no escalation (`R-ESCALATE-4`). The judge returns its verdict in full in
+      that message, and the verdict is posted when the owner rules.
+    - Until the owner rules, nothing is pushed, posted, edited, deleted, closed, force-pushed or
+      re-run.
+12. **Posts.** A post about such a spike by its card's author, maker, checker, judges or coordinator
+    holds the published set or a neutral sentence. No spike evidence is produced in a CI job.

@@ -47,10 +47,12 @@ pull request carrying it is no longer docs-only.
 ## How you do it
 
 - **Measure on the host the question is about.** Run the thing. Record the command, the versions
-  and what came back, so a reader can repeat it. A spike that argues instead of measuring has not
-  done its job.
+  and what came back, so a reader can repeat it.
+- **On a personal machine**, collect and publish only as `docs/host-bootstrap.md`, "Spikes on a
+  personal machine", says. Where you find private content, stop, ask by that section's private
+  channel, and never redact and continue.
 - **Write for the card your finding unblocks.** Say what the next card should do, and what it must
-  not assume. A recommendation nobody can act on is half a result.
+  not assume.
 - **Load `.claude/skills/acceptance/` before you file a card** (`R-CARD-4`). A spike's finding
   usually becomes work, and that work is its own card with its own acceptance.
 - Deliver the report as a pull request, so a judge rules on it before it lands.
@@ -64,8 +66,7 @@ pull request carrying it is no longer docs-only.
    same code in the pull request is a defect.
 3. **You leave an incidental finding in the report.** This is not the finding the card asked for.
    It is the defect you hit on the way, root-caused, and rightly did not chase. Nothing reads a
-   report looking for work, so file it as its own card (`R-CARD-11`). A finding recorded only in
-   prose gets rediscovered later, at the cost of a whole dispatch.
+   report looking for work, so file it as its own card (`R-CARD-11`).
 
 ## What you never do
 
