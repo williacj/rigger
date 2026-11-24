@@ -30,22 +30,21 @@ const UNIT = /\.(?:service|scope|slice|socket|target|timer)$/;
 
 /**
  * C2: whether the line holds an address C2's passing cell does not cover. It walks out from each
- * `@` rather than matching the whole pattern, which would be quadratic on a long line without one.
+ * `@`, so two addresses that overlap are both read, and no character is read again for a pattern
+ * that does not match, which would be quadratic on a long line.
  */
 function holdsAddress(line) {
-  let from = 0;
   for (let at = line.indexOf('@'); at !== -1; at = line.indexOf('@', at + 1)) {
     let start = at;
-    while (start > from && LOCAL.test(line[start - 1])) start -= 1;
+    while (start > 0 && LOCAL.test(line[start - 1])) start -= 1;
     if (start === at) continue;
     DOMAIN.lastIndex = at + 1;
     const found = DOMAIN.exec(line);
     if (!found) continue;
-    from = DOMAIN.lastIndex;
     const local = line.slice(start, at).toLowerCase();
     const domain = found[0].toLowerCase();
     if (local === 'noreply' || local === 'no-reply' || domain === 'users.noreply.github.com') continue;
-    if (RESERVED.test(domain) || UNIT.test(domain) || /^\d/.test(domain) || line[from] === ':') continue;
+    if (RESERVED.test(domain) || UNIT.test(domain) || /^\d/.test(domain) || line[DOMAIN.lastIndex] === ':') continue;
     return true;
   }
   return false;
@@ -64,7 +63,16 @@ const holdsProcessHeader = (line) => (ID_COLUMN.test(line) && COMMAND_COLUMN.tes
   || (BARE_ID_COLUMN.test(line) && NAME_COLUMN.test(line));
 
 const WORD = /[\p{L}\p{N}]+/gu;
-const folded = (text) => text.normalize('NFC').toLowerCase().normalize('NFC');
+const ASCII = /^[\x00-\x7f]*$/;
+
+/**
+ * Text as C5 compares it: in NFC, with each character folded alone. A whole string's lowercase
+ * turns on the letters around a Greek sigma, so an entry and a line that holds it could differ.
+ */
+function folded(text) {
+  if (ASCII.test(text)) return text.toLowerCase();
+  return Array.from(text.normalize('NFC'), (character) => Array.from(character.toLowerCase().toUpperCase(), (one) => one.toLowerCase()).join('')).join('');
+}
 
 /** The list's entries by the first word each holds, so a line looks up its own words only. */
 const indexes = new WeakMap();
@@ -181,6 +189,16 @@ export function placeName(path, entries) {
   const text = folded(path);
   const safe = rowsIn(path, entries).length === 0 && !entries.some((entry) => text.includes(entry.text));
   return safe ? JSON.stringify(path) : 'a path this message does not print';
+}
+
+const ROWS = {
+  C1: 'an account id', C2: 'an email address', C3: 'a process-table header', C4: 'an oversized evidence file', C5: 'an entry of the private list',
+};
+
+/** One refusal: its row and its place, in the fullest words that hold no entry of the list. */
+export function refusalLine(row, place, ordinal, entries) {
+  const holdsAny = (text) => entries.some((entry) => folded(text).includes(entry.text));
+  return [`${row}, ${ROWS[row]}: ${place}`, `${row}: ${place}`, `${row} #${ordinal}`].find((text) => !holdsAny(text)) ?? row;
 }
 
 /** The updates a push asks for, its deletions left out, from what git hands the hook. */
@@ -324,18 +342,14 @@ function readList() {
   }
 }
 
-const ROWS = {
-  C1: 'an account id', C2: 'an email address', C3: 'a process-table header', C4: 'an oversized evidence file', C5: 'an entry of the private list',
-};
-
 /** Why this push is refused, one line each. */
 function refusals(defaultRef) {
   const updates = updatesIn(readFileSync(0, 'utf8'));
   if (updates.length === 0) return [];
   const list = readList();
   if (list.refusal) return [list.refusal];
-  const lines = findings(updates, defaultRef, list.entries).map(({ row, place }) => `${row}, ${ROWS[row]}: ${place}`);
-  return [...new Set(lines)];
+  const distinct = new Map(findings(updates, defaultRef, list.entries).map((found) => [`${found.row} ${found.place}`, found]));
+  return [...distinct.values()].map(({ row, place }, index) => refusalLine(row, place, index + 1, list.entries));
 }
 
 if (import.meta.main) {

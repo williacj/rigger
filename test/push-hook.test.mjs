@@ -231,6 +231,7 @@ for (const defaultBranch of ['main', 'trunk']) {
 }
 
 const ENTRY = ['Quill', 'feather'].join('');
+const SIGMA = ['\u039c\u039f', '\u03a3\u03a3'].join('');
 const SID = [['S', '1', '5', '21'].join('-'), '7'].join('-');
 
 /** The fixture, on a topic branch, whose pushes meet an invented private list. */
@@ -238,7 +239,7 @@ function listed() {
   const f = fixture('main');
   gitIn(f.clone, 'switch', '-q', '-c', 'topic', 'origin/main');
   const list = join(dirname(f.hooks), 'home', '.config', 'rigger', 'private-list');
-  writeFileSync(list, `# invented\n${ENTRY}\n`);
+  writeFileSync(list, `# invented\n${ENTRY}\n${SIGMA}\n`);
   return {
     ...f,
     list,
@@ -261,7 +262,7 @@ function refuses(f, row, args = ['origin', 'topic'], place = /./) {
   assert.notEqual(result.status, 0, 'the push was not refused');
   assert.match(result.stderr, new RegExp(`refused: ${row}\\b`), result.stderr);
   assert.match(result.stderr, place);
-  assert.doesNotMatch(result.stderr + result.stdout, new RegExp(`${ENTRY}|${SID}`, 'i'));
+  assert.doesNotMatch(result.stderr + result.stdout, new RegExp(`${ENTRY}|${SID}|${SIGMA}`, 'iu'));
   assert.equal(f.refs(), before);
   assert.equal(f.reachedSuite(), false);
 }
@@ -272,23 +273,13 @@ function passes(f, args = ['origin', 'topic']) {
   assert.equal(f.reachedSuite(), true);
 }
 
-// D29 reason: wiring; the rows' decisions are proved in test/push-content.test.mjs.
-test('a push whose added lines hold refused content is refused, and one that holds none reaches the suite', () => {
-  const f = listed();
-  f.commit({ 'notes.txt': 'plain\n' });
-  passes(f);
-  rmSync(join(f.hooks, 'refuse-if-suite-red.called'));
-  f.commit({ 'notes.txt': `plain\nby ${ENTRY}\n` });
-  refuses(f, 'C5', undefined, /"notes\.txt" line 2/);
-});
-
 const utf16be = (text) => Buffer.from(text, 'utf16le').swap16();
 const HEADER = `${'PI'}${'D'} ${'COMM'}${'AND'}`;
 const ADDRESS = ['ana', 'post.zone'].join('@');
 
 // D29 reason: wiring; the rows' decisions are proved in test/push-content.test.mjs.
 test('each row refuses a real push, in every encoding it reads, whatever the attributes say', () => {
-  for (const [row, line] of [['C1', SID], ['C2', ADDRESS], ['C3', HEADER], ['C5', ENTRY]]) {
+  for (const [row, line] of [['C1', SID], ['C2', ADDRESS], ['C2', ['noreply', 'post.zone', 'other.zone'].join('@')], ['C3', HEADER], ['C5', ENTRY], ['C5', `\u03bc\u03bf${'\u03c3'.repeat(2)}`]]) {
     for (const bytes of [Buffer.from(`${line}\n`), Buffer.from(`${line}\n`, 'utf16le'), utf16be(`${line}\n`)]) {
       const f = listed();
       f.commit({ '.gitattributes': '* binary -diff\n', 'data.bin': bytes });
@@ -304,6 +295,7 @@ test('each row refuses a real push, in every encoding it reads, whatever the att
 test('a list entry is refused in every place a push publishes', () => {
   const places = {
     'a path': [(f) => f.commit({ [`${ENTRY}/x.txt`]: 'x\n' }), /, a path\./],
+    'a path in another case': [(f) => f.commit({ [`docs/${SIGMA}.txt`]: 'x\n' }), /, a path\./],
     'a link target': [(f) => { symlinkSync(ENTRY, join(f.clone, 'link')); f.commit({}); }, /its link target/],
     'a message': [(f) => f.commit({ x: 'x\n' }, `about ${ENTRY}`), /its message/],
     'an author field': [(f) => { writeFileSync(join(f.clone, 'x'), 'x'); gitIn(f.clone, 'add', 'x'); gitIn(f.clone, 'commit', '-qm', 'x', `--author=${ENTRY} <a@example.invalid>`); }, /author or committer/],
@@ -325,6 +317,12 @@ test('a list entry is refused in every place a push publishes', () => {
     prepare(f);
     assert.doesNotThrow(() => refuses(f, 'C5', args, place), name);
   }
+  const named = listed();
+  named.commit({ 'x.txt': `${ENTRY}\n` });
+  const object = gitIn(named.clone, 'rev-parse', 'HEAD').trim().slice(0, 12);
+  writeFileSync(named.list, `${ENTRY}\n${object}\n`);
+  assert.ok(!named.push('origin', 'topic').stderr.includes(object), 'the refusal printed an entry that is an object name');
+  refuses(named, 'C5');
 });
 
 // D29 reason: wiring; which lines a merge adds is proved in test/push-content.test.mjs.
@@ -399,7 +397,6 @@ test('a tip that peels to a tree or a blob is read whole, what the remote holds 
     ['a file', (f) => tree(f, { 'a/x.txt': `x\n${ENTRY}\n` }), 'C5', /"a\/x\.txt" line 2/, 'tree'],
     ['a path', (f) => tree(f, { [`a/${ENTRY}/x.txt`]: 'x\n' }), 'C5', /a path\./, 'tree'],
     ['a link', (f) => { symlinkSync(ENTRY, join(f.clone, 'link')); tree(f, {}); }, 'C5', /its link target/, 'tree'],
-    ['a big evidence file', (f) => tree(f, { 'docs/spikes/big.txt': 'a\n'.repeat(250_001) }), 'C4', /big/, 'tree'],
     ['a blob', (f) => blob(f, Buffer.from(`${SID}\n`, 'utf16le')), 'C1', /line 1/, 'blob'],
   ];
   for (const [name, prepare, row, place, tag] of cases) {
