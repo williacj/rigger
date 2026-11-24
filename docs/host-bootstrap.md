@@ -202,8 +202,8 @@ No matching script may be running when you pull. From `~/GitHub/rigger`, run `gi
 
 ## Spikes on a personal machine
 
-This guide binds nobody by itself. The spike engineer's prompt and the acceptance and code-review
-skills say their part is done as this section says, and a spike card adopts it.
+A spike card that adopts this section is what binds: its maker finishes against that card's
+acceptance, and its judges rule on it. This guide binds nobody by itself.
 
 1. **Terms.** A personal machine is a host a person signs in to. Private content is an identifier
    of a person, account, device, network or organisation, and any record of a process, service,
@@ -239,8 +239,10 @@ skills say their part is done as this section says, and a spike card adopts it.
 7. **Private material.** It is captured records, never an agent session's transcript or its log
    (`R-EVIDENCE-4`).
 8. **Naming it.** The report lists each private item by a sequential id and the acceptance items it
-   supports, and by nothing else. A judge's verdict gives of one only that id, the acceptance
-   item's ordinal, and "establishes" or "does not establish".
+   supports, and by nothing else. A verdict cites that entry by its path at the head, and gives the
+   id, the acceptance item's ordinal, and "establishes" or "does not establish". That is what a
+   judge gives for private material under the [code-review skill](../.claude/skills/code-review/SKILL.md)'s
+   step 7, "Findings", and "What you return", item 2.
 9. **Privacy check.** Someone who is neither the maker nor a judge of the card makes it, before the
    branch's first push. An image, archive or encoded blob is opened or removed. The checker reads
    each of these, for each class of private content in rule 1:
@@ -252,6 +254,11 @@ skills say their part is done as this section says, and a spike card adopts it.
     SHA and the reader's role. Each later head has a result before it is pushed, which reads what
     is new since the head that last passed. The pull request's text as posted equals the draft. A
     push's time is read from the forge's activity record, `gh api repos/{owner}/{repo}/activity`.
+    For a card that adopts this section, a head does not meet the card where:
+    - it has no result;
+    - its result has another SHA;
+    - its result was posted after the push; or
+    - its result was edited since.
 11. **Private channel.** A maker, checker or judge who finds private content stops, and tells the
     coordinator in a message that is not posted. The coordinator takes it to the owner's
     interactive session.
@@ -262,3 +269,9 @@ skills say their part is done as this section says, and a spike card adopts it.
       re-run.
 12. **Posts.** A post about such a spike by its card's author, maker, checker, judges or coordinator
     holds the published set or a neutral sentence. No spike evidence is produced in a CI job.
+13. **Adoption.** A spike card that uses a personal machine says that it adopts this section, names
+    its checker, and predeclares its publishable facts and the private items an acceptance item
+    rests on. It carries three acceptance items, one condition each:
+    - the judged head has a rule 10 result, posted before that head was pushed and not edited since;
+    - the report lists each private item as rule 8 says;
+    - the pull request's text and files hold no private content as rule 1 defines it.
