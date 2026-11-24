@@ -1,0 +1,39 @@
+ABOUTME: Card #1459: the summary and failing lines of the fast job of a CI run on an earlier head, kept off-repo, merged into main at fbddb4b1.
+Fetched as that run's log archive (a zip; the file 4_fast.txt, 15811 lines), sha256
+d356fe89bff82aeb89eac23526c6433aad280fb4acf4858d60d7886e1ded4929. Lines 15762 to 15796 follow, unchanged.
+
+2026-11-23T00:09:25.3990086Z ℹ tests 6034
+2026-11-23T00:09:25.3990242Z ℹ suites 0
+2026-11-23T00:09:25.3990417Z ℹ pass 6024
+2026-11-23T00:09:25.3990538Z ℹ fail 1
+2026-11-23T00:09:25.3990662Z ℹ cancelled 0
+2026-11-23T00:09:25.3990809Z ℹ skipped 9
+2026-11-23T00:09:25.3990927Z ℹ todo 0
+2026-11-23T00:09:25.3991079Z ℹ duration_ms 490612.703898
+2026-11-23T00:09:25.3991176Z 
+2026-11-23T00:09:25.3991244Z ✖ failing tests:
+2026-11-23T00:09:25.3991328Z 
+2026-11-23T00:09:25.3991417Z test at test/run.test.mjs:264:1
+2026-11-23T00:09:25.3991945Z ✖ run dispatches each card's selected steps and its maker: the agent CLI runs once per claimed card, and every L1 dispatch event is a step's or the maker's (1948.514045ms)
+2026-11-23T00:09:25.3992419Z   AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+2026-11-23T00:09:25.3992666Z   + actual - expected
+2026-11-23T00:09:25.3992794Z   
+2026-11-23T00:09:25.3992908Z     {
+2026-11-23T00:09:25.3993022Z       '10': 'Coding',
+2026-11-23T00:09:25.3993141Z       '20': 'Coding',
+2026-11-23T00:09:25.3993272Z       '30': 'Coding',
+2026-11-23T00:09:25.3993394Z   +   '40': 'Ready'
+2026-11-23T00:09:25.3993527Z   -   '40': 'Coding'
+2026-11-23T00:09:25.3993647Z     }
+2026-11-23T00:09:25.3993745Z   
+2026-11-23T00:09:25.3994035Z       at TestContext.<anonymous> (file:///home/runner/work/rigger/rigger/test/run.test.mjs:267:10)
+2026-11-23T00:09:25.3994358Z       at async Test.run (node:internal/test_runner/test:1409:7)
+2026-11-23T00:09:25.3994646Z       at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+2026-11-23T00:09:25.3994890Z     generatedMessage: true,
+2026-11-23T00:09:25.3995029Z     code: 'ERR_ASSERTION',
+2026-11-23T00:09:25.3995238Z     actual: { '10': 'Coding', '20': 'Coding', '30': 'Coding', '40': 'Ready' },
+2026-11-23T00:09:25.3995491Z     expected: { '10': 'Coding', '20': 'Coding', '30': 'Coding', '40': 'Coding' },
+2026-11-23T00:09:25.3995718Z     operator: 'deepStrictEqual',
+2026-11-23T00:09:25.3995904Z     diff: 'simple'
+2026-11-23T00:09:25.3996017Z   }
+2026-11-23T00:09:25.4686525Z ##[error]Process completed with exit code 1.

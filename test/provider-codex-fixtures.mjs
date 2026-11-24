@@ -123,6 +123,7 @@ export function controlledLayout(t) {
     if (command !== '/controlled/ps') throw new Error(`unexpected controlled read ${command}`);
     const fields = args.at(-1);
     const columns = {
+      'pid=,ppid=,pgid=,lstart=': `${running.child.pid} 1 ${running.child.pid} ${startTime}`,
       'lstart=': startTime,
       'ucomm=': 'codex',
       'pid=,stat=': `${running.child.pid} S`,

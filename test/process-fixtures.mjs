@@ -2,7 +2,7 @@
 // process naming it, shell scripts that live in it, `git` stand-ins put first on PATH, children
 // they leave alive or that outlive a timeout, process groups as a dead engine leaves them, reads
 // of what those scripts leave behind and of a process's start time, a standard error nothing
-// drains, and a wait on a condition that ends with its test.
+// drains, condition waits, real dispatch descendants and their controlled process-table host.
 
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, spawnSync as rawSpawnSync } from 'node:child_process';
@@ -15,6 +15,9 @@ import { fileURLToPath } from 'node:url';
 
 import { temporaryDirectory } from './temporary-directory.mjs';
 import { onPath } from './on-path.mjs';
+import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
+import { createRequire } from 'node:module';
 
 /** Observe the raw synchronous command result before a fixture caller interprets it. */
 const spawnSync = (...input) => {
@@ -722,4 +725,116 @@ export function gitRacing(directory, times = 1) {
     'fi',
     `exec '${GIT}' "$@"`,
   ].join('\n'));
+}
+
+/**
+ * M1-M6 from #1430's fixture, with M3 and M6 forked by the still-live M1. PID files
+ * record every fork before a test can release the command or ask M1 to exit. POSIX::setsid
+ * follows docs/spikes/whole-tree-containment/fixture/fixture.sh; no native helper is needed.
+ */
+export function descendantCommand(directory) {
+  const program = [
+    '# ABOUTME: Starts the six containment members and records every fork.',
+    'use POSIX (); my $h = $ARGV[0];',
+    'sub mark { my ($name, $pid) = @_; open(my $f, ">", "$h/$name.tmp") or die; print $f $pid; close $f; rename "$h/$name.tmp", "$h/$name.pid" or die; }',
+    'mark("M1", $$);',
+    'for my $name (qw(M2 M3 M4 M5 M6)) {',
+    '  my $pid = fork // die; next if $pid;',
+    '  if ($name eq "M4") { exit if fork; }',
+    '  if ($name eq "M3" || $name eq "M6") { POSIX::setsid() >= 0 or die "setsid: $!"; }',
+    '  chdir "/" or die if $name eq "M6";',
+    '  $SIG{TERM} = "IGNORE" if $name eq "M5";',
+    '  mark($name, $$); exec "/usr/bin/tail", "-f", "$h/hold" or die;',
+    '}',
+    '1 until -e "$h/parent-exit";',
+  ].join('\n');
+  const path = join(directory, 'members.pl');
+  writeFileSync(path, program);
+  return fixture(directory, 'command', [
+    'echo $$ > "$here/command.pid"',
+    '/usr/bin/perl "$here/members.pl" "$here" &',
+    'while [ ! -f "$here/release" ]; do :; done',
+    'exit 0',
+  ].join('\n'));
+}
+
+/** All six recorded members have reached their intended images before an ending is triggered. */
+export async function descendantsReady(t, directory) {
+  const names = ['M1', 'M2', 'M3', 'M4', 'M5', 'M6'];
+  await until(() => names.every((name) => existsSync(join(directory, `${name}.pid`))), t);
+  const pids = Object.fromEntries(names.map((name) => [name, Number(read(directory, `${name}.pid`))]));
+  await until(() => Object.entries(pids).every(([name, pid]) => name === 'M1'
+    || spawnSync('/bin/ps', ['-p', String(pid), '-o', 'ucomm='], { encoding: 'utf8' }).stdout.trim() === 'tail'), t);
+  return pids;
+}
+
+/**
+ * Controlled process table for tracker decisions. Columns follow ps(1)'s -o contract and
+ * #1293's 7073488047 native capture (`pid,ppid,pgid,lstart`); state/name/command answers
+ * follow the same documented requests as budgetWorld. ChildProcess uses EventEmitter and
+ * PassThrough, as test/process-host.test.mjs does. No expected decision supplies an answer.
+ */
+export function trackerWorld(clock, group = 900_000_010, table = new Map()) {
+  // Standalone copies used by the warm runner do not carry the production host.
+  const { realHost } = createRequire(import.meta.url)('../src/substrate/host.mjs');
+  const escaped = group + 10;
+  const started = 'Thu Oct 29 12:00:00 2026';
+  const add = (pid, parent, pgid = group) => table.set(pid, { pid, parent, group: pgid, started, state: 'S', name: 'controlled', cmd: `controlled ${pid}` });
+  add(group, 1);
+  add(group + 1, group);
+  add(escaped, group + 1, escaped);
+  const child = Object.assign(new EventEmitter(), { pid: group, exitCode: null, signalCode: null, stdout: new PassThrough(), stderr: new PassThrough() });
+  const reads = [];
+  const signals = [];
+  const events = [];
+  let fault = () => undefined;
+  const answer = (tool, args) => {
+    reads.push({ tool, args, at: clock.now() });
+    const injected = fault(tool, args);
+    if (injected !== undefined) return injected;
+    if (tool === '/controlled/lsof') return { status: 1, stdout: '', stderr: '' };
+    const selected = args.includes('-A') ? [...table.values()]
+      : args.includes('-g') ? [...table.values()].filter(({ group }) => group === Number(args[args.indexOf('-g') + 1]))
+      : args.includes('-p') ? args[args.indexOf('-p') + 1].split(',').map(Number).flatMap((pid) => table.has(pid) ? [table.get(pid)] : []) : [];
+    const stdout = selected.map((row) => args.at(-1).split(',').map((column) => ({
+      'pid=': row.pid, 'ppid=': row.parent, 'pgid=': row.group, 'lstart=': row.started,
+      'stat=': row.state, 'ucomm=': row.name, 'command=': row.cmd, 'xstat=': '9',
+    })[column]).join(' ')).join('\n');
+    return { status: stdout === '' ? 1 : 0, stdout: stdout === '' ? '' : `${stdout}\n`, stderr: '' };
+  };
+  const finish = (code = 0, signal = null) => {
+    if (child.exitCode !== null || child.signalCode !== null) return;
+    table.delete(group);
+    child.exitCode = code;
+    child.signalCode = signal;
+    child.emit('exit', code, signal);
+    child.stdout.end();
+    child.stderr.end();
+  };
+  const host = {
+    ...realHost, ps: '/controlled/ps', lsof: '/controlled/lsof',
+    clock: { ...clock, pause: (delay) => clock.advance(clock.now() + delay) },
+    spawn: () => child, spawnSync: answer,
+    execFile(tool, args, _options, done) {
+      const printed = answer(tool, args);
+      if (printed.hold) printed.hold(() => done(printed.error ?? null, printed.stdout ?? '', printed.stderr ?? ''));
+      else queueMicrotask(() => done(printed.error ?? (printed.status === 1 ? Object.assign(new Error('no match'), { code: 1 }) : null), printed.stdout ?? '', printed.stderr ?? ''));
+      return { stdout: { destroy() {} }, stderr: { destroy() {} } };
+    },
+    killChild() {},
+    signal(target, name) {
+      if (name !== 0) signals.push({ target, name });
+      const selected = [...table.values()].filter((row) => target < 0 ? row.group === -target : row.pid === target);
+      if (selected.length === 0) throw Object.assign(new Error('absent'), { code: 'ESRCH' });
+      for (const row of selected) {
+        if (row.refuses && name !== 0) throw Object.assign(new Error('refused'), { code: 'EPERM' });
+        if (name === 'SIGSTOP') row.state = 'T';
+        if (name === 'SIGCONT') row.state = 'S';
+        if (name === 'SIGKILL' && !row.outlives) row.state = 'Z';
+      }
+      if (target === -group && name === 'SIGKILL') queueMicrotask(() => finish(null, name));
+    },
+  };
+  return { group, escaped, table, host, reads, signals, events, finish,
+    inject: (next) => { fault = next; }, emitter: { emit: (event, fields) => events.push({ event, ...fields }) } };
 }
