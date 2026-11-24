@@ -34,7 +34,7 @@ every layer emits and derives signals. Improvement (L6) turns signals into propo
 | **L0 Substrate** | How to talk to one external system: the forge (board, issues, PRs, CI through `gh`), git, the OS process model, each agent CLI. Retries, timeouts, containment mechanics, and which of its own git operations on one repository run one at a time. | Anything about cards or work. L0 does not know what a card is. | Each forge and git call's latency and outcome, process spawn and exit, survivors killed by name and command line | Engineer cards, within the L0 budget | `src/substrate/` |
 | **L1 Execution** | How to run one dispatch in one workspace: isolation, lifetime, result as exit code plus captured output. Making the workspace an attempt at a card runs in. | Whether to run it, or what the result means | Dispatch start, end, duration, exit, timeout, and the workspace each runs in. A workspace made or removed. | Engineer cards, within the L1 budget | `src/execution/` |
 | **L2 Workflow** | The next action for a card from its stage and observable facts, including which kind selects a ready card and the provider each role's dispatch runs on, and whether its acceptance passes the form check. Every change to a card's column; the review loop; the gate rule, and whether a card's pull request merges; escalation routing; whether a failure is the work's, or the environment's, card-local or `out`. Which provisioning steps a card runs, whether a step's failure stops its attempt, and whether a failed attempt is tried again. The card a clock trigger's due firing opens, and whether an earlier firing's card exists. | Which card is next; what good means | Card transitions with cause, verdicts, loop rounds, escalations by category, provisioning failures and attempts, by class | Spec rows, ratified by the owner | `src/workflow/` |
-| **L3 Scheduling** | Pull order by priority; concurrency; claims taken synchronously before any await; the repo lane, which runs the merges L2 decides one at a time. Admission, which is whether any card may be pulled; the hold that closes admission; the three trigger kinds, and when each clock trigger is armed and due. The halt on starts while the sink refuses an event, which is not the admission hold. When Rigger reads the forge again for a write it has not yet shown, and when it stops. | What a card requires or whether it passed | Triggers by kind and target, queue depth, in-flight count, wait, lock contention, throughput, admission holds and their reason, clock triggers' armings and each firing's outcome | Spec rows and config | `src/scheduling/` |
+| **L3 Scheduling** | Pull order by priority; concurrency; claims taken synchronously before any await; the repo lane, which runs the merges L2 decides one at a time. Admission, which is whether any card may be pulled; the hold that closes admission; the three trigger kinds, and when each clock trigger is armed and due. The halt on starts while the sink refuses an event, which is not the admission hold. The stop on a sign of an earlier dispatch's process, which is neither. When Rigger reads the forge again for a write it has not yet shown, and when it stops. | What a card requires or whether it passed | Triggers by kind and target, queue depth, in-flight count, wait, lock contention, throughput, admission holds and their reason, clock triggers' armings and each firing's outcome | Spec rows and config | `src/scheduling/` |
 | **L4 Quality** | What the work is and what good means: kinds of work, their maker and judge sets, and the providers those run on, roles, review procedure, provisioning steps, recorded decisions, which improvement roles run and which signals count | How Rigger runs, beyond the engine settings the extension points name | Nothing. L2 records what a role produced: findings by code and judge, rounds per kind of work, rework, later defect escape. L3 records each dispatch's role and tier, from which L5 derives the tier corrections tier accuracy counts ("Telemetry") | The owner, in the consumer's repository | The consumer's repository; Rigger ships templates under `templates/` |
 | **L5 Observation** | How every layer's events are recorded and which signals derive from them. Whether and when the stream is pushed to the data ref | Anything that acts on them. L5 records and derives, never decides | The report. Each push's outcome | Engineer cards | `src/observation/` |
 | **L6 Improvement** | What to propose, and to whom, from L5's signals. The object-level loop reorders L3's queue and re-tiers within L4. The meta-level loop proposes changes to any layer. | It changes no code, in any layer, ever | Proposals with target layer, and their outcome | Spec rows | `src/improvement/` |
@@ -58,7 +58,8 @@ every layer emits and derives signals. Improvement (L6) turns signals into propo
    delivers it unread, through L0's provider adapter. L0's provider adapter gives L2 one fact:
    its CLI's prompt limit in UTF-8 bytes, or none. No other fact of the adapter reaches L2.
    L3 gives L2 the card's events from the event record unread. L2 owns the judge failure count
-   in "Failure model". L3
+   in "Failure model". L1 gives L3 each sign of an earlier dispatch's process that stands, and L3
+   hands none of them to L2 ("Signs of an earlier dispatch's process"). L3
    gives L1 dispatches, and has L1 make the workspace each
    attempt at a card runs in. L1 gives L3 the tip of a card's line of work in that workspace once a
    continuing attempt's maker exits, and L3 hands it to L2 unread. L0's workspace adapter,
@@ -484,6 +485,7 @@ fires").
 | a read of the board, the priority, the facts or admission fails | the next poll fires on schedule, and `run` hands the failure to the verb as set out below |
 | the sink refuses the poll's `trigger` event | the poll claims nothing, under the halt ("Failure model"); the next poll fires on schedule, and `run` hands the refusal to the verb |
 | a hold's closer could not be saved | `run` polls no more. It ends once the claims it holds finish, and exits non-zero naming the failure, as "Failure model" says |
+| a sign of an earlier dispatch's process stands | the poll claims nothing; `run` ends once no dispatch it started still runs, and exits non-zero naming each sign ("Signs of an earlier dispatch's process") |
 
 `run` ends on a hold's closer it could not save, rather than polling on. No pull claims a card
 after that failure, so a `run` that stayed up would poll and claim nothing for the rest of its
@@ -509,6 +511,8 @@ answered once it ends. The verb prints it and picks the exit status. While a clo
   relaunches `run` until the job is loaded again (`README.md`, "To unload the label").
 - A `run` ended on a hold's closer it could not save hands the verb what settled since the previous
   drain and was not yet handed, and the verb exits non-zero, as above.
+- A `run` ended on a sign hands the verb what settled since the previous drain and each sign, and
+  the verb exits non-zero ("Signs of an earlier dispatch's process").
 
 **Cards this run set aside.** A card L3 excludes outright under "Failure model"'s direct set-aside
 table is **set aside**. No-clock action memory excludes an identity, not its card. With no clock
@@ -1083,12 +1087,17 @@ cannot record runs no command. Each entry names:
 - the dispatch's card, where it has one.
 - the dispatch's directory, where it has one, and what L0 needs to tell that directory from a
   later one at the same path.
-- the dispatch's tracked processes, each by pid and start time.
+- the dispatch's tracked processes, each by pid and start time;
+- `unended`, each process of the dispatch L0 could not end, where it has any;
+- `unread`, each group, directory or dispatch L0 recorded in place of processes it could not read,
+  where it has any;
+- `settled`, where the dispatch's containment settled whole, so a later start owes the entry
+  nothing but its signs.
 
 L1 keeps what each role dispatch's agent CLI wrote to its standard output and standard error, byte for byte, under `<state directory>/output/<dispatch id>/` (`R-RECORD-19`). L3 invokes it once L1's dispatch settles, for a maker, a judge or an escalation's role, and never for a step. L5's push reads only its stream, so the kept output never leaves the machine.
 
-L1 removes an entry once its group is empty, and on Rigger's own exit. Past exit cleanup's budget, it keeps each remaining group's entry, so that the next start ends that group's tracked processes and sweeps its directories. On start, L3 has L1 kill
-every group it recorded, before L3 records or reads anything. L0 kills a recorded group only once it
+L1 removes an entry once its group is empty and it holds no sign, as "Signs of an earlier dispatch's process" sets out. Past exit cleanup's budget, it keeps each remaining group's entry, so that the next start ends that group's tracked processes and sweeps its directories. On start, L3 has L1 kill
+every group it recorded, before L3 records or reads anything, in the order "Signs of an earlier dispatch's process" gives. L0 kills a recorded group only once it
 has confirmed that the group is the one recorded. A start that cannot confirm a recorded group kills
 nothing in it, keeps its entry, and stops, as an unrecorded kill does. Every kill of a dispatch's
 processes, on Rigger's exit or on a later start, is recorded under that dispatch and its card.
@@ -1109,7 +1118,7 @@ where it sent the card to a role. The facts also include the judge failures the 
 
 `.rigger/` holds four things and no others:
 
-- the process groups L1 must read back to kill, each with its dispatch, card and tracked processes;
+- the process groups L1 must read back to kill, each with its dispatch, card, tracked processes and signs;
 - whether admission is open and why it closed;
 - L5's event stream;
 - under `.rigger/output/<dispatch id>/`, what each role dispatch's agent CLI wrote to its standard output and standard error (`R-RECORD-19`).
@@ -1627,7 +1636,7 @@ dispatch, L0's tracker below ends such a process. L0 never stops a process group
 it. It reads which processes the group holds, kills the group whole, then kills and reads it again until no member is left alive, with three exceptions:
 
 - Where it cannot read the table, it sends the kill on every look until a bound passes, then records the kill of the group and why, and settles without knowing the group is empty.
-- Where a member is one L0 may not signal, or outlives the kill for a second, longer bound, L0 records it by name and command line as a process it could not end, and settles.
+- Where a member is one L0 may not signal, or outlives the kill for a second, longer bound, L0 records it by name and command line as a process it could not end, and settles. L1 keeps it as a sign.
 - Past exit cleanup's budget, L0 kills the group once and settles, as "Supervising `run`" says.
 
 A process the kill ended that no read before it found is recorded as the kill of the
@@ -1715,7 +1724,9 @@ Past exit cleanup's budget, L0 kills the group bare, and L1 keeps the entry with
 for the next start ("Supervising `run`"). A later start ends each recorded tracked process whose
 identity L0 confirms, whether or not L0 confirms the recorded group. It confirms by the stop and
 start-time read above. Where a recorded tracked pid's start time no longer matches, or L0 cannot
-read it, the start leaves that process alive and records it as not ended.
+read it, the start leaves that process alive and records it as not ended. A start time that no
+longer matches shows the process gone, so L1 keeps no sign of it. One L0 cannot read leaves L1
+unable to tell, so L1 keeps it under the entry's `unended`.
 
 The tracker misses three kinds of descendant, which `R-STATE-29`'s table puts out of scope:
 
@@ -1731,7 +1742,10 @@ A role's escalation directory holds `main`, and the role's agent CLI runs there,
 It holds `head` only where the card has an open pull request.
 
 Where a process that left its group holds the command's output open once the group is empty, L0 stops
-reading after a bound it sets and records that it did. A dispatch ends only once L0 has terminated the group's processes, or, past exit cleanup's budget, has sent the group its kill.
+reading after a bound it sets and records that it did. A dispatch's containment settles once L0
+has ended each process it must end, or recorded it as not ended, or recorded a group, directory or
+the dispatch in place of processes it could not read. Past exit cleanup's budget, it settles once
+L0 has sent the group its kill.
 
 L0's process adapter reaches the operating system through one host. No other module under `src/`
 starts a process, sends a signal, or reads the process table. The host gives the adapter a clock
@@ -1803,6 +1817,143 @@ neither the owner nor any action outside Rigger.
 The halt is not the admission hold. It neither closes admission nor reopens it, and `R-SCHED-4`
 names what does. The halt stops starts alone. L3 still hands L2 the outcome of every dispatch
 already running, as running cards finish under a closed admission (`R-SCHED-3`).
+
+### Signs of an earlier dispatch's process
+
+`R-STATE-30` to `R-STATE-39` have Rigger start no dispatch while a sign of an earlier dispatch's
+process stands. This section places where L1 keeps each sign, the one point that refuses a
+dispatch, the layer that ends the run, and what a start does. Its subject is a dispatch's
+processes alone. A command that is not a dispatch passes no L1 `dispatch`, so a process of one
+that L0 could not end is no sign, and L0 still records it (`R-STATE-19`).
+
+A dispatch with a process L0 could not end settles with that process recorded as not ended. One
+with a group, directory or the dispatch recorded in place of processes L0 could not read settles
+too. Neither settle fails the dispatch, and L1 keeps what each recorded as a sign.
+
+**Where each sign is kept.** L1 keeps every sign, each kind in one place:
+
+| Sign | Where L1 keeps it |
+|---|---|
+| a process L0 could not end (`R-STATE-31`) | the dispatch's entry in the record, under `unended`: its pid, its start time where a read gave one, its name and its command line |
+| a group, directory or dispatch recorded in place of processes L0 could not read (`R-STATE-32`) | the dispatch's entry, under `unread`: which of the three it is, what L0 needs to tell it from a later one at the same id or path, and why the read failed |
+| a record L1 cannot read (`R-STATE-33`) | the record itself |
+| a write of the record that failed while Rigger runs, and left out a process it would have named (`R-STATE-34`) | L1's memory, in `src/execution/groups.mjs`, the one module that writes the record |
+| a write of the record that did not complete (`R-STATE-34`) | the record's temporary file, which the write left beside the record |
+
+The record holds the signs of every dispatch Rigger ran in that state directory, so each engine
+stops on its own record's signs alone.
+
+**When a sign's record goes.** L1 removes a sign's record on these conditions alone:
+
+- a process under `unended`, or one a failed write left out: once a read shows it gone, as
+  "Showing a process gone" below sets out;
+- a group, directory or dispatch under `unread`: once a later read of it succeeds, and shows none
+  of its processes alive or shows it is not the one recorded;
+- the record's temporary file: once a start has read it, and has written the record keeping each
+  sign its reap left of what the file named, as "At a start" below sets out;
+- a record L1 cannot read: never. L1 neither rewrites nor removes it, and the owner repairs or
+  removes it, as under `R-STATE-11`.
+
+An entry goes only once its containment settled whole and it holds neither `unended` nor
+`unread`. Nothing else removes a sign's
+record. The dispatch's settle, its group becoming empty, Rigger's own exit and a kill or record
+event the sink refused are no such condition.
+
+A sign's record survives Rigger's own exit, past exit cleanup's budget included. At that exit, L1
+writes each process a failed write left out into its dispatch's entry under `unended`, unless L0
+has shown it gone. Past the budget, that entry stays unmarked, so the next start still owes it its
+whole cleanup. A write that fails then leaves the record's temporary file, which the next start
+reads. Exit cleanup also writes the sign to standard error, as `R-STATE-37` names it. Where that
+write leaves no temporary file either, no record of the sign survives. That case is out of scope,
+as `### R-STATE-30 — Signs Rigger stops on` puts it (M8-U110 on #1293).
+
+**The one point that refuses a dispatch.** Every dispatch passes L1's `dispatch`, in
+`src/execution/run.mjs`, before its command starts, whatever its role or card. There L1 reads the
+record and its own memory, and refuses to start the command while a sign stands. It reports to its
+caller that the command did not start, naming each sign. It records the dispatch's end, as for
+every start it recorded. A record it cannot read at that read is a sign, never a failure of the
+dispatch's environment.
+
+L1 makes that read in the same synchronous step in which L0 spawns the command. L1 makes no await
+between the read and its hand-over to L0's process adapter, and the adapter makes none before its
+spawn. No other step runs between them, so no sign can arise between the point and the command's
+start. A dispatch whose start L3 recorded before a sign arose, and whose command had not started,
+therefore reaches the point after the sign, and its command does not start. A change that adds an
+await between them moves the read after it.
+
+**The layer that ends the run.** L3 ends a run on a sign (`R-STATE-36`). L1 hands it each sign two
+ways:
+
+- on the outcome of every dispatch, naming each sign standing when it settled, whether its command
+  ran, never started, or had an event the sink refused;
+- in `take`'s synchronous claim, where L3 asks L1 for the signs that stand, as it lists admission
+  there.
+
+Once L3 holds a sign, it claims no card and starts no dispatch. Where L2 answers a claim L3 holds
+with a dispatch, L3 starts none and releases that claim. Each dispatch whose command had started
+runs to its own end, whatever its role or card, and L3 hands L2 its outcome as any. A board move, an escalation
+note or a merge for a card already claimed goes on. L3 ends the run once no dispatch it started
+still runs, whether or not a clock trigger is declared.
+
+L3 then records `sign.stopped` ("L3's stop on a sign") and hands the verb each sign unread. L3 is
+the layer that writes each sign to the verb's output, through the verb, as it hands every outcome.
+The verb prints each sign in the form `R-STATE-37` gives for its kind, and exits non-zero. Where
+the sink refuses `sign.stopped`, the verb also names that refusal.
+
+The stop is neither the halt nor the admission hold. It closes no admission, writes no closer, and
+keeps no state beyond the record. A later start looks again.
+
+**Attempts.** L3 hands L2 no outcome of a dispatch a sign kept from starting. L2 therefore counts
+no attempt for it, and it counts toward no hold under `R-FAIL-8` (`R-STATE-39`). A judge's dispatch
+a sign kept from starting is no judge failure under `R-LOOP-25`, and L2 records no `judge.failed`
+for it. So it counts toward no escalation under `R-LOOP-26`, which L2 counts from those events. The
+next pull answers the card from its facts, as for any card.
+
+**At a start.** L3 has L1 reap the record before L3 records or reads anything, whatever ended the
+previous run (`R-STATE-35`). The reap runs in this order:
+
+1. L1 reads the record, then the record's temporary file where a write left one. Where it cannot
+   read either, it ends nothing and writes nothing, and goes to step 7 naming the file
+   (`R-STATE-11`, `R-STATE-33`).
+2. L1 adds each group, directory and process the temporary file names, and the record does not, to
+   the entries it acts on. No step removes the temporary file but step 6's write.
+3. For each entry not marked `settled`, L0 acts as above, whether or not it holds a sign: it kills
+   the confirmed group, ends the tracked processes and sweeps the directories.
+4. For each entry, L0 tries again to end each process under `unended` that it confirms, by pid and
+   start time, is still the one recorded. For an entry marked `settled`, that and step 5 are all
+   the start owes it.
+5. For each group, directory or dispatch under `unread` that is still the one recorded, L0 reads it.
+   It ends each process the read shows alive there.
+6. L1 writes the record. It keeps each sign whose condition under `R-STATE-31`, `R-STATE-32` or
+   `R-STATE-34` does not yet hold, and each sign the reap left. It marks `settled` each entry kept
+   for its signs whose step 3 settled whole. That write's rename replaces the temporary file.
+7. Where a sign still stands, the start starts no work. L3 records `sign.stopped`, and the verb
+   names each sign and exits non-zero.
+
+L1 marks an entry `settled` only once its dispatch's containment settled whole: its tracked set
+ended, its group killed and its directories swept, at the dispatch's ending or at a start's step 3.
+An entry kept past exit cleanup's budget, or left by a kill outright, is not marked. So a sign never
+stands in for cleanup an entry still owes (`R-STATE-28`; "Supervising `run`"). A start that finds a temporary file naming a process the record
+does not therefore starts no work until that process is shown gone. A reap whose write in step 6
+fails stops the start, as a kill that fails does.
+
+**Showing a process gone.** L0's process adapter is the one module that shows a process gone
+(`R-STATE-38`). It shows one gone only by a read of the whole process table that succeeds, and
+lists no process at its pid that is still the one recorded, by its start time. A process the read
+lists as exited and not yet reaped by its parent is gone. A read that fails or times out shows
+nothing, and so does a signal's answer. A read that lists no process at the pid shows it gone,
+whether or not a start time was recorded. Where the read lists a live process at the pid, and no
+start time was recorded or the read gives none, L0 cannot tell, and the sign stands.
+
+**What would reverse each choice:**
+
+- **L1's `dispatch` as the one point:** a path that starts a dispatch's command without passing it.
+- **L1's memory for a failed write:** a requirement that such a sign survive a kill outright, which
+  would need a second file written before the record.
+- **L3 keeping the outcome from L2:** a requirement that a card's work go on in the same run after
+  a sign, which would have L2 answer the refusal.
+- **An entry marked `settled` reaped for its signs alone:** a process found working in a settled
+  dispatch's directory at a later start that no sign named.
 
 ## Telemetry
 
@@ -1971,7 +2122,7 @@ local reader returns. Once a line ends after it, the copy holds that same line, 
 applies the same four rules. A reader of the pushed copy therefore finds the same events as a
 reader of the local stream, read at the push's start, once the record has recovered.
 
-**What it adds nowhere.** `.rigger/` holds the same three things "Failure model" names, and the
+**What it adds nowhere.** `.rigger/` holds the same things "Failure model" names, and the
 recovery writes no other state. The sink's hold is memory in its own process, as it is before
 naming. It adds no lock. It places no recovery machinery in L1, since the reader and the sink are L5's.
 
@@ -2201,6 +2352,22 @@ records it once its rule admits the merge, and before it makes the merge call:
 L5 does not read the config, so the event names the required roles itself. Where the sink refuses
 `merge.decided`, L2 makes no merge call and reports the refusal. A merge the lane makes therefore
 always has its record. A person's merge runs no lane, and records none.
+
+### L3's stop on a sign
+
+L3 records `sign.stopped` once per stop, when a sign stops it at a start or during a run ("Signs of
+an earlier dispatch's process"). It names no card and no dispatch. L3 gives it one field:
+
+| Field | What it holds | Absent from the line |
+|---|---|---|
+| `signs` | Each sign that stands, as an object whose `kind` gives its other fields, as the table below sets out | Never |
+
+| `kind` | The sign | Its other fields (`R-STATE-37`) |
+|---|---|---|
+| `process` | a process Rigger could not end | `pid`, `name`, and `cmd`, its command line |
+| `read` | a group, directory or dispatch recorded in place of processes Rigger could not read | `group`, `directory` or `dispatch`, naming what it read, and `reason`, why the read failed |
+| `record` | a record Rigger cannot read, or a write of it whose file Rigger cannot read | `path`, the path of the file it cannot read, and `reason` |
+| `write` | a write of the record that failed or did not complete | `path`, the record's path, and `reason` |
 
 ### Pushing the stream
 
