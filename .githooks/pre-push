@@ -1,7 +1,8 @@
 #!/bin/sh
 # ABOUTME: Reads the remote's default branch and refuses pushes to it, or any push when its name
-# is unavailable, before refusing a push made with a failing suite. It skips the suite when the
-# tree of every pushed tip, peeled to its commit, is one a green commit or merge hook recorded.
+# is unavailable, then a push whose content `refuse-private-content.mjs` refuses, before refusing a
+# push made with a failing suite. It skips the suite when the tree of every pushed tip, peeled to
+# its commit, is one a green commit or merge hook recorded.
 
 set -u
 
@@ -18,6 +19,10 @@ case $default_ref in
   *) refuse_unknown ;;
 esac
 
+# Every byte git handed the hook, a last line git did not end included; `$(...)` drops trailing ones.
+updates=$(cat; printf x)
+updates=${updates%x}
+
 pushed=
 while read -r local_ref local_sha remote_ref remote_sha; do
   if [ "$remote_ref" = "refs/heads/$default_branch" ]; then
@@ -25,7 +30,11 @@ while read -r local_ref local_sha remote_ref remote_sha; do
     exit 1
   fi
   pushed="$pushed $local_sha"
-done
+done <<EOF
+$updates
+EOF
+
+printf '%s' "$updates" | node "$(dirname "$0")/refuse-private-content.mjs" "$default_ref" || exit 1
 
 # True when every pushed tip peels to a commit whose tree the record holds. A deletion, whose
 # object name is all zeros, pushes no commit; a tip that peels to no commit is never recorded.
