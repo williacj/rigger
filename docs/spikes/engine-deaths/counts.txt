@@ -1,0 +1,118 @@
+ABOUTME: #1462's counts over the Emend event records, as its command printed them in run 017, less its
+private digests. The two window lines are shortened to the minute, because an event's own time is not published.
+
+== reading
+streams read: 1
+other files whose name opens events, not read: 0
+lines of one stream repeated in another: 0
+lines read: 13307
+lines later than the selector: 0
+lines unparsed: 0
+lines kept: 13307
+kept lines read past a torn fragment: 0
+values dropped as outside their field's shape: 0
+== counts
+window, first kept event: 2026-11-12T21:48Z (shortened to the minute)
+window, last kept event: 2026-11-24T15:34Z (shortened to the minute)
+runs: 148
+runs with a run.start: 28
+runs with a pull: 32
+engine hours, the spans of runs with a pull: 9.6267
+runs with a pull whose spans overlap, pairs: 0
+run.start by concurrency: 3: 28
+work claims: 78
+work claims that dispatched: 60
+work claims interrupted: 3
+work claims interrupted, holding a D1 or D2 dispatch: 3
+work claims interrupted, holding none: 0
+first attempts: 57
+redos after an interruption: 3
+merge.start with no later merge.end of that card in its run: 0
+host faults, as report counts them: 0
+dispatches started: 317
+dispatches started, maker: 37
+dispatches started, judge or other role: 87
+dispatches started, provisioning step: 193
+dispatches started, unknown kind: 0
+dispatches started under no claim: 0
+L3 dispatches with no dispatch.start: 0 (claim released: 0, claim not released: 0)
+dispatch.end or dispatch.timeout with no dispatch.start: 0
+completed, exit 0: 313
+D1 dispatches: 3
+D1 with a recorded.killed from a later run: 3
+D1 without one: 0
+D1 with no later run.start or trigger of another run: 0
+D2 dispatches: 0
+D2 by how it ended: exit 0: 0, exit 1 to 128: 0, exit above 128: 0, unread: 0
+D2 marked surely, by unread or kept: 0
+D2 with a call.end after it in its run: 0
+closing-stretch ends in a run with a D1 dispatch, no D2: 0
+D3 dispatches: 1
+D3 of agents: 1
+D3 of provisioning steps: 0
+D3 with exit above 128: 0
+D3 in a claim with no slot.release: 0
+D4 dispatches: 0
+D5 dispatches: 0
+no ending fits: 0
+engine deaths, runs with a D1 or D2 dispatch: 1
+engine deaths, D1: 1
+engine deaths, D2: 0
+dispatches those deaths interrupted: 3
+engine deaths in a run with a run.start: 1
+dispatch hours, ended dispatches: 15.4452
+dispatch.end with no ms: 0
+dispatch hours, starts with no end, to the run's last event: 0.0002
+dispatch hours, starts with no end, to the next run's start: 0.0117
+D6 gaps of 10 minutes or more between a run's events: 22 (a dispatch in flight: 22, none in flight: 0)
+D6 gaps of 1 hour or more between a run's events: 0 (a dispatch in flight: 0, none in flight: 0)
+D6 events whose ts is before the event ahead of them in their run: 0
+D7 call.end forge: ok: 7843, failed: 509, timed-out: 0
+D7 call.end git: ok: 2424, failed: 0, timed-out: 0
+D7 class environment events: 0 (none)
+event 1: D1, maker, elapsed 486 to 14260 ms, recorded.killed yes, redo yes, redo pulled 19005 ms after the run's last event, redo dispatch 61701 ms
+event 2: D1, maker, elapsed 241 to 14015 ms, recorded.killed yes, redo yes, redo pulled 19006 ms after the run's last event, redo dispatch 426022 ms
+event 3: D1, maker, elapsed 0 to 13774 ms, recorded.killed yes, redo yes, redo pulled 19006 ms after the run's last event, redo dispatch 92670 ms
+lines by layer and event:
+  L0 call.end 10776
+  L0 recorded.killed 3
+  L1 dispatch.end 314
+  L1 dispatch.start 317
+  L1 workspace.made 248
+  L1 workspace.removed 278
+  L2 acceptance.history 105
+  L2 marker.read 341
+  L2 merge.decided 23
+  L2 review.escalate 14
+  L2 transition 105
+  L3 admission.close 15
+  L3 admission.open 14
+  L3 dispatch 317
+  L3 merge.end 23
+  L3 merge.start 23
+  L3 pull 101
+  L3 run.start 28
+  L3 slot.release 75
+  L3 trigger 130
+  L5 push.end 57
+lines holding each field:
+  ts 13307
+  run 13307
+  layer 13307
+  event 13307
+  card 5881
+  dispatch 2465
+  exit 314
+  ms 11147
+  role 1004
+  attempt 105
+  class 0
+  outcome 10856
+  system 10776
+  concurrency 28
+  reason 32
+  unread 0
+  kept 0
+  step 193
+  census 0
+  maker 0
