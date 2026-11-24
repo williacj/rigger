@@ -2,7 +2,7 @@
 # parts of the maker's own tool calls, as its session record holds them, in an empty directory.
 
 # Usage: SPIKE_SESSION=<record> python3 -I recover.py <directory>
-# It writes each text as it stood at each recorded run, once per distinct text, and prints which run
+# It writes each text as it stood at each of runs 001 to 032, once per distinct text, and prints which run
 # executed which. Nothing is typed from memory: a part the record lacks stops it.
 import hashlib, json, os, re, subprocess, sys
 
@@ -61,7 +61,7 @@ for when in sorted(bash):
         for made in re.findall(r'\./rec\.sh |^rec\.sh ', line) or re.findall(r'(?:^|[;(] ?)rec\.sh ', line):
             run += 1
             if run in (26, 31): run += 1
-            snapshot(run)
+            if run <= 32: snapshot(run)
         i += 1
 subprocess.run(['rm', '-rf', work], check=True)
 print('run file version sha256')
