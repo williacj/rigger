@@ -282,6 +282,8 @@ function leavePartial(directory) {
   writeFileSync(join(state, 'groups.json.partial'), '[{"group":');
 }
 
+// Host reason: wiring; under D30's awaiting-split exception, the real record reader preserves the malformed partial and both record-presence cases.
+// Deterministic counterpart: test/sign-refusal.test.mjs :: S16: an unreadable unfinished write stops a start before any kill or rewrite
 test('given an unreadable partial record beside an empty or absent record, the start keeps both files and names the sign', SETTLES_WITHIN, async (t) => {
   for (const record of ['[]', undefined]) {
     const directory = scratch(t);
@@ -296,6 +298,8 @@ test('given an unreadable partial record beside an empty or absent record, the s
   }
 });
 
+// Host reason: OS behaviour; a real recorded group remains alive when the actual malformed partial is refused before cleanup.
+// Deterministic counterpart: test/sign-refusal.test.mjs :: S16: an unreadable unfinished write stops a start before any kill or rewrite
 test('given an unreadable partial record beside a recorded group, the start keeps the group alive and writes nothing', SETTLES_WITHIN, async (t) => {
   const directory = scratch(t);
   const started = await startGroup(t, directory, 'group');
@@ -331,6 +335,8 @@ const UNREMOVABLE = {
 };
 
 for (const [unremovable, leave] of Object.entries(UNREMOVABLE)) {
+  // Host reason: OS behaviour; the actual unwritable file or directory is refused before signalling the real recorded group.
+  // Deterministic counterpart: test/sign-refusal.test.mjs :: S16: an unreadable unfinished write stops a start before any kill or rewrite
   test(`given an unreadable partial record, ${unremovable}, beside an entry, the start leaves its group alive and names the sign`, SETTLES_WITHIN, async (t) => {
     const directory = scratch(t);
     const state = stateOf(directory);
@@ -748,6 +754,8 @@ test('FM-ready-C0(1) launch, failed ps, and delayed marker finish before C1 reje
   console.log(`C595_CELL ${JSON.stringify({ cell: 'FM-ready-C0(1)', recordCell: 'R-C1', content, completedPrefix: [], beforeScratch, beforeStart, events, started })}`);
 });
 
+// Host reason: wiring; under D30's awaiting-split exception, the actual partial directory is refused and the real empty record stays unchanged.
+// Deterministic counterpart: test/sign-refusal.test.mjs :: S16: an unreadable unfinished write stops a start before any kill or rewrite
 test('given an unreadable partial record beside an empty record, the start writes nothing and names the sign', SETTLES_WITHIN, async (t) => {
   const directory = scratch(t);
   const state = stateOf(directory);
@@ -760,6 +768,8 @@ test('given an unreadable partial record beside an empty record, the start write
   assertPartialSign(failure, directory);
 });
 
+// Host reason: wiring; under D30's awaiting-split exception, the actual partial directory stays named without depending on the sink.
+// Deterministic counterpart: test/sign-refusal.test.mjs :: S16: an unreadable unfinished write stops a start before any kill or rewrite
 test('given an unreadable partial record and a refusing sink, the start still names the partial record and writes nothing', SETTLES_WITHIN, async (t) => {
   const directory = scratch(t);
   const state = stateOf(directory);
