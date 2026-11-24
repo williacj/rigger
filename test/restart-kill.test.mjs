@@ -25,6 +25,7 @@ import { assertUntouched, tailIn } from './process-fixtures.mjs';
 import { chmodSync, rmSync, statSync } from 'node:fs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 import { standInAgent } from './stub-claude.mjs';
+import { descendantCommand, descendantsReady } from './process-fixtures.mjs';
 
 /** The stand-in agent every maker in this file runs as, on the PATH each verb runs under. */
 const agent = standInAgent();
@@ -686,4 +687,66 @@ test('given a restart whose forge stand-in never answers, still running when its
   assert.equal(child.signalCode, 'SIGKILL', 'the restart was still running once the teardown had run');
   assert.deepEqual(running(world.directory), []);
   await ran;
+});
+
+// Host reason: OS behaviour; a real engine SIGKILLed after its real tracker recorded a real process in a session of its own, whose parent then exited, must have that process ended by a real restart.
+// Deterministic counterpart: test/exit-budget.test.mjs :: a dispatch's entry names each process the tracker adds, keeps it whatever later reads show, and its exit ends one whose rewrite failed
+// proves R-STATE-29
+test('R2: given the engine SIGKILLed after its tracker listed M6 and M6\'s parent in the group exited, rigger once leaves M6 not alive when its first board read reaches the forge stand-in, and records its kill under the killed dispatch before its first L3 event', SETTLES_WITHIN, async (t) => {
+  const world = consumerIn(t, [card(10)]);
+  // The engine's `ps` is the real one, which also logs each whole-table read, the tracker's alone,
+  // once it has answered, after a line marking that the read began.
+  const ps = fixture(world.directory, 'ps', [
+    'case " $* " in *" -A "*) whole=1 ;; *) whole= ;; esac',
+    '[ -n "$whole" ] && echo read >> "$here/tracker-reads"',
+    '/bin/ps "$@" > "$here/ps-out.$$"',
+    'status=$?',
+    '[ -n "$whole" ] && /bin/cat "$here/ps-out.$$" >> "$here/tracker-reads"',
+    '/bin/cat "$here/ps-out.$$"',
+    '/bin/rm -f "$here/ps-out.$$"',
+    'exit $status',
+  ].join('\n'));
+  const engine = startEngine(world, descendantCommand(world.directory), { ps });
+  const exited = once(engine, 'exit');
+  const pids = await descendantsReady(t, world.directory);
+  const group = Number(read(world.directory, 'command.pid'));
+  // The `gh` in `first/` reports at its first call whether the process at `child.pid` is alive.
+  writeFileSync(join(world.directory, 'child.pid'), String(pids.M6));
+  // A read showed M6 outside the group with its parent in it, which is what the tracker adds, and
+  // the tracker has begun a later read, so it has settled the one that showed it: the tracker never
+  // overlaps its reads. A read taken before M6 left the group shows it as a member, which the
+  // tracker does not add.
+  const listed = () => {
+    const reads = existsSync(join(world.directory, 'tracker-reads')) ? read(world.directory, 'tracker-reads').split(/^read$/m).slice(1) : [];
+    return reads.slice(0, -1).some((table) => {
+      const rows = table.trim().split('\n').map((line) => line.trim().split(/\s+/).slice(0, 3).map(Number));
+      return rows.some(([pid, parent, pgid]) => pid === pids.M6 && parent === pids.M1 && pgid !== group) && rows.some(([pid, , pgid]) => pid === pids.M1 && pgid === group);
+    });
+  };
+  await until(() => listed() || engine.exitCode !== null, t);
+  assert.ok(listed(), `the engine ended before its tracker listed M6 with its parent in the group: ${engine.said}`);
+  writeFileSync(join(world.directory, 'parent-exit'), '');
+  await until(() => spawnSync('/bin/ps', ['-p', String(pids.M6), '-o', 'ppid='], { encoding: 'utf8' }).stdout.trim() === '1', t);
+  engine.kill('SIGKILL');
+  await exited;
+  assert.equal(alive(pids.M6), true, 'M6 did not outlive the engine, so this proves nothing');
+  // What a failure is read against: what the dead engine left recorded, and each whole-table read
+  // that showed M6, by its parent and group.
+  const left = readGroups(world.state);
+  const shown = read(world.directory, 'tracker-reads').split(/^read$/m).slice(1).map((table, index) => ({ index,
+    M6: table.trim().split('\n').map((line) => line.trim().split(/\s+/).slice(0, 3).map(Number)).find(([pid]) => pid === pids.M6) }));
+
+  const ran = await restart(world, 'once');
+
+  const first = atFirstCall(world);
+  const named = readEvents(world.state).filter((event) => event.pid === pids.M6 || ['recorded.unended', 'directory.unread', 'descendants.unread'].includes(event.event));
+  assert.deepEqual(first.alive, [], `${ran.stderr}\n${JSON.stringify({ group, M1: pids.M1, M6: pids.M6, left, shown, named, after: spawnSync('/bin/ps', ['-o', 'pid=,ppid=,pgid=,stat=,lstart=', '-p', String(pids.M6)], { encoding: 'utf8' }).stdout })}`);
+  assert.match(first.call, /^call api graphql /, 'the first call is a board read');
+  const { dispatch, card: killed, restarted } = restartRecord(world);
+  const kills = restarted.filter((event) => event.event === 'recorded.killed' && event.pid === pids.M6);
+  assert.deepEqual(kills.map(({ layer, dispatch: id, card: of, name, cmd }) => ({ layer, dispatch: id, card: of, name, cmd })), [
+    { layer: 'L0', dispatch, card: killed, name: 'tail', cmd: `/usr/bin/tail -f ${world.directory}/hold` },
+  ], JSON.stringify(restarted));
+  const firstL3 = restarted.findIndex((event) => event.layer === 'L3');
+  assert.ok(firstL3 >= 0 && restarted.indexOf(kills[0]) < firstL3, `M6's kill was not recorded before the restart's first L3 event: ${JSON.stringify(restarted)}`);
 });
