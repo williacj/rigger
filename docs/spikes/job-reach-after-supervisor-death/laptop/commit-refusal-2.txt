@@ -1,0 +1,74 @@
+ABOUTME: Card #1460 commit attempt 2, refused by the commit hook: the suite's failure section, from its 'failing tests' line to the end of the log, unabridged. The whole log (6076118 bytes) had sha256 694ed6d8971aaabc6ca16e2e10dfa4eb79a272034c002a32a115381c45e9f11c.
+✖ failing tests:
+
+test at test/doc-reference-check.test.mjs:81:1
+✖ the checked documents hold no path:line pointer at any fail level (33.692ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+  
+  + [
+  +   {
+  +     level: 'strict',
+  +     line: 1426,
+  +     literal: 'docs/spikes/job-reach-after-supervisor-death/win/w.cjs:36',
+  +     path: 'docs/spikes/job-reach-after-supervisor-death.md'
+  +   },
+  +   {
+  +     level: 'strict',
+  +     line: 1427,
+  +     literal: 'docs/spikes/job-reach-after-supervisor-death/win/w.cjs:143',
+  +     path: 'docs/spikes/job-reach-after-supervisor-death.md'
+  +   },
+  +   {
+  +     level: 'strict',
+  +     line: 1428,
+  +     literal: 'docs/spikes/job-reach-after-supervisor-death/session-log.txt:1078',
+  +     path: 'docs/spikes/job-reach-after-supervisor-death.md'
+  +   },
+  +   {
+  +     level: 'strict',
+  +     line: 1429,
+  +     literal: 'docs/spikes/job-reach-after-supervisor-death/session-log.txt:1085',
+  +     path: 'docs/spikes/job-reach-after-supervisor-death.md'
+  +   },
+  +   {
+  +     level: 'strict',
+  +     line: 1430,
+  +     literal: 'docs/spikes/job-reach-after-supervisor-death/session-log.txt:1092',
+  +     path: 'docs/spikes/job-reach-after-supervisor-death.md'
+  +   },
+  +   {
+  +     level: 'strict',
+  +     line: 1431,
+  +     literal: 'docs/spikes/job-reach-after-supervisor-death/session-log.txt:1644',
+  +     path: 'docs/spikes/job-reach-after-supervisor-death.md'
+  +   }
+  + ]
+  - []
+  
+      at TestContext.<anonymous> (file:///Users/cjwilliams/GitHub/rigger-worktrees/1460-spike-engineer/test/doc-reference-check.test.mjs:82:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: [ { path: 'docs/spikes/job-reach-after-supervisor-death.md', level: 'strict', line: 1426, literal: 'docs/spikes/job-reach-after-supervisor-death/win/w.cjs:36' }, { path: 'docs/spikes/job-reach-after-supervisor-death.md', level: 'strict', line: 1427, literal: 'docs/spikes/job-reach-after-supervisor-death/win/w.cjs:143' }, { path: 'docs/spikes/job-reach-after-supervisor-death.md', level: 'strict', line: 1428, literal: 'docs/spikes/job-reach-after-supervisor-death/session-log.txt:1078' }, { path: 'docs/spikes/job-reach-after-supervisor-death.md', level: 'strict', line: 1429, literal: 'docs/spikes/job-reach-after-supervisor-death/session-log.txt:1085' }, { path: 'docs/spikes/job-reach-after-supervisor-death.md', level: 'strict', line: 1430, literal: 'docs/spikes/job-reach-after-supervisor-death/session-log.txt:1092' }, { path: 'docs/spikes/job-reach-after-supervisor-death.md', level: 'strict', line: 1431, literal: 'docs/spikes/job-reach-after-supervisor-death/session-log.txt:1644' } ],
+    expected: [],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at test/loop.test.mjs:5559:1
+✖ L7: through the run verb, a clock-held run fires a pull at its slot release (9271.656125ms)
+  Error: the condition () => pulls() === 2 did not hold within 5000 ms
+      at waitFor (file:///Users/cjwilliams/GitHub/rigger-worktrees/1460-spike-engineer/test/loop-world.mjs:70:40)
+      at async TestContext.<anonymous> (file:///Users/cjwilliams/GitHub/rigger-worktrees/1460-spike-engineer/test/loop.test.mjs:5567:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+refused: the suite is not green.
+Fix it and commit the fix on its own before you go on (AGENTS.md, Before you start).
+--no-verify needs the owner's approval first.

@@ -1,0 +1,307 @@
+ABOUTME: Card #1459 failed run r0a: its transcript entry, copied whole from transcript.txt beside this directory.
+Names masked under the owner's ruling (1459#7090274068). The original is kept off-repo; its sha256 is withheld for privacy (1459#7104456293).
+### step r0a  2026-11-22T03:47:35.249Z -> 2026-11-22T03:47:38.632Z  host=wsl-root-via-hostpc  orch pid 25762 (ppid 25749), child pid 25965, exit 0
+$ ["ssh","hostpc","wsl.exe","-u","root","-e","bash","-s","fx1459r0a","r0","n1","n3"]
+stdin: case-r0a.sh (sha256 [sha256 withheld]):
+<<<
+# ABOUTME: Card #1459 helpers inlined at the top of every root script sent to WSL: UTC timestamps, the process record (pid,
+# starttime, boot id), login-state reads, and a scan that records only the spike's own processes.
+export TZ=UTC LC_ALL=C
+TU=rigger-spike
+D=/home/$TU/1459-spike-engineer
+RECF=$D/record.txt
+NODE=$D/node-v24.19.0-linux-x64/bin/node
+BOOT=$(</proc/sys/kernel/random/boot_id)
+while read -r k v; do [[ $k == btime ]] && BT=$v; done < /proc/stat
+now(){ local t=$EPOCHREALTIME; printf '%(%Y-%m-%dT%H:%M:%S)T.%sZ' "${t%.*}" "${t#*.}"; }
+say(){ echo "$(now) $*"; }
+declare -A SEEN
+# cmdl <pid>: the process's argv joined by spaces, cut to 80 characters, in REPLY (bash builtins only).
+cmdl(){ local -a a; { mapfile -d '' -t a < /proc/$1/cmdline; } 2>/dev/null; REPLY="${a[*]}"; REPLY=${REPLY:0:80}; }
+# st <pid>: sets STF to the fields of /proc/<pid>/stat after the command name (STF[1] ppid, STF[19] starttime). Fails if gone.
+st(){ local raw; { raw=$(</proc/$1/stat); } 2>/dev/null || return 1; STF=(${raw##*) }); }
+# rp <label> <pid>: record one process by pid and starttime (field 22 of /proc/<pid>/stat, clock ticks since the VM's boot).
+rp(){
+  st "$2" || { say "REC-MISS label=$1 pid=$2 (gone before it could be read)"; return 0; }
+  local s=${STF[19]} key="$2:${STF[19]}"; [[ -n ${SEEN[$key]} ]] && return 0; SEEN[$key]=1
+  local cs=$(( BT*100 + s )) line
+  printf -v line 'REC host=wsl boot=%s pid=%s starttime=%s created=%(%Y-%m-%dT%H:%M:%S)T.%02dZ recorded=%s label=%s' "$BOOT" "$2" "$s" "$((cs/100))" "$((cs%100))" "$(now)" "$1"
+  echo "$line"; [[ -d $D ]] && echo "$line" >> "$RECF"
+}
+# mine <pid>: true if the process is the spike's own: a descendant of this script, owned by the user under test, in an fx1459
+# unit or the user under test's slice, or in root's user slice and started no earlier than 3 s before this script.
+mine(){
+  local p=$1 cg u; { cg=$(</proc/$p/cgroup); } 2>/dev/null || return 1
+  case $cg in *fx1459*|*user-$TUID.slice*) return 0;; esac
+  u=$(stat -c %u /proc/$p 2>/dev/null); [[ -n $TUID && $u == "$TUID" ]] && return 0
+  if [[ $cg == *user-0.slice* ]]; then st $p && (( STF[19] >= MYST - 300 )) && return 0; fi
+  local q=$p n=0; while (( q > 1 && n < 64 )); do [[ $q == "$$" ]] && return 0; st $q || return 1; q=${STF[1]}; ((n++)); done
+  return 1
+}
+# recnew <label>: record every live process of the spike's own (see mine) not yet recorded.
+recnew(){ local p; for p in /proc/[0-9]*; do p=${p#/proc/}; [[ $p == "$BASHPID" ]] && continue; mine $p && { cmdl $p; rp "$1:$REPLY" "$p"; }; done; }
+# recboot <label>: when this connection started the distro, record every process of that start except [name withheld]'s (uid 1000) and
+# sshd's per-connection processes, which belong to [name withheld]'s own sessions and user manager and are not the spike's.
+recboot(){ local p u; for p in /proc/[0-9]*; do p=${p#/proc/}; [[ $p == "$BASHPID" ]] && continue; u=$(stat -c %u /proc/$p 2>/dev/null) || continue; [[ $u == 1000 ]] && continue; cmdl $p; [[ $REPLY == [name withheld]* ]] && continue; rp "$1:$REPLY" "$p"; done; }
+# start_record: record this script and its /init parents; and, if the distro's pid 1 started less than 10 s before this
+# script, every process of that distro start (recboot); then the spike's own processes.
+start_record(){
+  st $$; MYST=${STF[19]}; st 1; P1ST=${STF[19]}; TUID=$(id -u $TU 2>/dev/null)
+  say "script pid $$ ppid $PPID starttime $MYST; distro pid 1 starttime $P1ST; boot_id $BOOT btime $BT; user under test $TU uid ${TUID:-none}"
+  rp "script:$TAG" $$; rp "init-parent" $PPID; st $PPID; rp "init-grandparent" "${STF[1]}"
+  if (( MYST - P1ST < 1000 )); then say "this connection started the distro (pid 1 started $((MYST - P1ST)) ticks before this script): recording that start, except [name withheld]'s processes"; recboot "boot"; fi
+  recnew "start"
+}
+# winrec <label>: record, through interop, this connection's Windows process chain and any WSL VM process started since it began.
+winrec(){ say "winrec $1"; /mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe -NoProfile -NonInteractive -EncodedCommand "$(sed "s/__TAG__/$TAG/;s/__LABEL__/$1/" $D/winrec.ps1 | iconv -t UTF-16LE | base64 -w0)" 2>/dev/null | tr -d '\r' | grep -v -e '^#< CLIXML' -e '^<Objs' | tee -a "$RECF"; }
+login_state(){
+  say "LOGIN STATE ($1)"; echo '$ loginctl list-sessions --no-pager'; loginctl list-sessions --no-pager
+  echo "\$ loginctl show-user $TU --no-pager -p State -p Sessions -p Linger -p Service"; loginctl show-user $TU --no-pager -p State -p Sessions -p Linger -p Service 2>&1
+  echo "\$ systemctl is-active user@$TUID.service"; systemctl is-active user@$TUID.service
+}
+wsl_alive(){ st 1; say "WSL instance ($1): boot_id $(</proc/sys/kernel/random/boot_id); distro pid 1 starttime ${STF[19]}; uptime $(cut -d' ' -f1 /proc/uptime) s"; }
+# tu_sessions: ids of the user under test's sessions other than its user manager's own (class manager).
+tu_sessions(){ loginctl list-sessions --no-legend --no-pager | awk -v u=$TU '$3==u && $6!="manager" {print $1}'; }
+# ---- case driver body. Arguments: <tag> <route r0|rl|rs> <cases...>. Runs each case for the user under test, as root only to
+# set up or revert the route and to observe; every supervisor and fresh writer runs as the user under test.
+TAG=$1; ROUTE=$2; shift 2; CASES="$*"
+start_record; winrec start; wsl_alive start
+UNITF=/etc/systemd/system/fx1459-rs@.service
+asuser(){ setpriv --reuid=$TUID --regid=$TUID --init-groups env -i HOME=/home/$TU USER=$TU LOGNAME=$TU PATH=/usr/bin:/bin XDG_RUNTIME_DIR=/run/user/$TUID "$@"; }
+revert(){
+  case $ROUTE in
+    rl) say '$ loginctl disable-linger rigger-spike'; loginctl disable-linger $TU; echo "exit $?"; ls -la /var/lib/systemd/linger;;
+    rs) say "revert RS"; systemctl stop 'fx1459-rs@*.service' 2>&1; systemctl reset-failed 'fx1459-rs@*.service' 2>&1; rm -v $UNITF; systemctl daemon-reload; echo '$ systemctl cat fx1459-rs@x.service'; systemctl cat fx1459-rs@x.service 2>&1; ls -la $UNITF 2>&1;;
+  esac
+}
+say "=== ROUTE $ROUTE setup"
+login_state "route $ROUTE, before setup"
+case $ROUTE in
+  r0) echo "R0: the user as created, linger unset"; ls -la /var/lib/systemd/linger;;
+  rl) trap revert EXIT; say '$ loginctl enable-linger rigger-spike'; loginctl enable-linger $TU; echo "exit $?"; ls -la /var/lib/systemd/linger
+      for i in $(seq 1 50); do [[ $(systemctl is-active user@$TUID.service) == active ]] && break; sleep 0.2; done; say "user@$TUID: $(systemctl is-active user@$TUID.service)"; recnew "rl-setup";;
+  rs) trap revert EXIT; say "install $UNITF"
+      cat > $UNITF <<UNIT
+# ABOUTME: Card #1459 route RS: a system unit that runs the supervisor as the unprivileged user under test with a delegated cgroup.
+[Unit]
+Description=fx1459 RS supervisor %i
+[Service]
+Type=simple
+User=$TU
+Group=$TU
+Delegate=yes
+KillMode=process
+WorkingDirectory=$D
+ExecStart=$NODE $D/supervisor.cjs %i rs-%i
+StandardOutput=append:$D/runs/rs-%i/sup.log
+StandardError=append:$D/runs/rs-%i/sup.log
+UNIT
+      cat $UNITF; systemctl daemon-reload; echo "daemon-reload exit $?";;
+esac
+waitlog(){ local f=$1 pat=$2 n=$3; for ((i=0;i<n*10;i++)); do grep -qE "$pat" $f 2>/dev/null && return 0; sleep 0.1; done; return 1; }
+alive_rec(){ st $1 && [[ ${STF[19]} == "$2" && ${STF[0]} != Z ]]; }
+supinfo(){ local l; l=$(grep -m1 '^REC .*label=supervisor:' $R/sup.log); SUP=$(sed -E 's/.* pid=([0-9]+) .*/\1/' <<<"$l"); SUPST=$(sed -E 's/.* starttime=([0-9]+) .*/\1/' <<<"$l"); TREE=$(grep -m1 ' TREE ' $R/sup.log | awk '{print $3}'); }
+listing(){ asuser $NODE $D/list.cjs $RUN "driver: $1" 2>&1; }
+end_survivors(){
+  local who pid start
+  while read -r _ who pid start _; do [[ $who == *from-root* ]] && continue; if alive_rec $pid $start; then kill -9 $pid && say "cleanup: ended recorded $who pid $pid (starttime $start)"; fi; done < <(grep '^MEMBER' $R/members.txt 2>/dev/null)
+  [[ -n $SUP ]] && alive_rec $SUP $SUPST && kill -9 $SUP && say "cleanup: ended recorded supervisor $SUP"
+}
+run_case(){
+  local c=$1 mode=$1; RUN=$ROUTE-$c; R=$D/runs/$RUN; SUP=; SUPST=; TREE=; H=
+  mkdir -p $R; chown $TU:$TU $R
+  say "=== CASE $c under $ROUTE (run $RUN)"; wsl_alive "case $RUN start"
+  if [[ $c == n2 ]]; then
+    say "N2: open a $TU login session through WSL interop: wsl.exe -u $TU -e sleep 8"
+    /mnt/c/Windows/System32/wsl.exe -u $TU -e sleep 8 & H=$!; rp "interop wsl.exe shim, $RUN login" $H
+    for i in $(seq 1 50); do [[ -n $(tu_sessions) ]] && break; sleep 0.2; done; recnew "$RUN-login"
+    login_state "$RUN: session open, before supervisor start"
+  else
+    login_state "$RUN: during the run, before supervisor start"
+    if [[ -n $(tu_sessions) ]]; then say "ABORT $RUN: $TU has a login session open"; return; fi
+  fi
+  if [[ $ROUTE == r0 && $c != n2 ]]; then mode=obtain; fi
+  say "start supervisor (mode $mode)"
+  case $ROUTE in
+    r0) if [[ $c == n2 ]]; then
+          echo "\$ asuser systemd-run --user --unit=fx1459-$RUN -p Delegate=yes -p KillMode=process -p StandardOutput=append:$R/sup.log -p StandardError=append:$R/sup.log --working-directory=$D $NODE $D/supervisor.cjs $mode $RUN"
+          asuser systemd-run --user --unit=fx1459-$RUN -p Delegate=yes -p KillMode=process -p StandardOutput=append:$R/sup.log -p StandardError=append:$R/sup.log --working-directory=$D $NODE $D/supervisor.cjs $mode $RUN 2>&1; echo "exit $?"
+        else
+          echo "\$ asuser $NODE $D/supervisor.cjs obtain $RUN > $R/sup.log 2>&1   (started directly as $TU with no session: R0 changes nothing)"
+          asuser $NODE $D/supervisor.cjs obtain $RUN > $R/sup.log 2>&1; echo "exit $?"
+          echo '$ asuser systemd-run --user --unit=fx1459-'$RUN'-unit -p Delegate=yes --working-directory='$D' '$NODE' '$D'/supervisor.cjs obtain '$RUN; asuser systemd-run --user --unit=fx1459-$RUN-unit -p Delegate=yes --working-directory=$D $NODE $D/supervisor.cjs obtain $RUN 2>&1; echo "exit $?"
+        fi;;
+    rl) echo "\$ asuser systemd-run --user --unit=fx1459-$RUN -p Delegate=yes -p KillMode=process -p StandardOutput=append:$R/sup.log -p StandardError=append:$R/sup.log --working-directory=$D $NODE $D/supervisor.cjs $mode $RUN"
+        asuser systemd-run --user --unit=fx1459-$RUN -p Delegate=yes -p KillMode=process -p StandardOutput=append:$R/sup.log -p StandardError=append:$R/sup.log --working-directory=$D $NODE $D/supervisor.cjs $mode $RUN 2>&1; echo "exit $?";;
+    rs) echo "\$ systemctl start fx1459-rs@$c.service"; systemctl start fx1459-rs@$c.service; echo "exit $?";;
+  esac
+  waitlog $R/sup.log 'READY|RESULT' 30; recnew "$RUN-supervisor"
+  say "supervisor log so far:"; cat $R/sup.log; supinfo
+  if grep -q 'RESULT' $R/sup.log; then say "RESULT for $RUN: $(grep RESULT $R/sup.log)"; recnew "$RUN-end"; return; fi
+  [[ -z $SUP ]] && { say "no supervisor record; abandoning $RUN"; end_survivors; return; }
+  say "supervisor pid $SUP starttime $SUPST tree $TREE"
+  case $c in
+    n1) login_state "$RUN: tree running, before the cgroup.kill write"
+        touch $R/go; say "trigger written"; waitlog $R/sup.log 'DONE' 40; say "supervisor log:"; sed -n '/trigger seen/,$p' $R/sup.log
+        listing "after DONE, at least 12 s after the write";;
+    n3) login_state "$RUN: tree running, before the kill"
+        listing "before kill -9 of the supervisor"
+        if alive_rec $SUP $SUPST; then say "\$ kill -9 $SUP"; kill -9 $SUP; say "kill -9 sent to recorded supervisor $SUP"; fi
+        sleep 12; listing "12 s after kill -9 of the supervisor, before the fresh write"
+        login_state "$RUN: supervisor killed, before the fresh write"
+        echo "\$ asuser $NODE $D/writer.cjs $RUN $TREE"; asuser $NODE $D/writer.cjs $RUN $TREE 2>&1
+        sleep 12; listing "12 s after the fresh write";;
+    n2) say "supervisor started under the open session; now close every session of $TU"
+        wait $H; say "interop login command exited ($?); sessions of $TU: $(tu_sessions | tr '\n' ' ')"
+        sleep 2; for s in $(tu_sessions); do say "\$ loginctl terminate-session $s   (its leader is the spike's own login, recorded above)"; loginctl terminate-session $s; echo "exit $?"; done
+        for i in $(seq 1 50); do [[ -z $(tu_sessions) ]] && break; sleep 0.2; done
+        CLOSED=$(now); say "every session of $TU closed at $CLOSED (tu_sessions empty: $([[ -z $(tu_sessions) ]] && echo yes || echo no))"
+        for i in $(seq 1 30); do sleep 1; a=$(asuser $NODE $D/list.cjs $RUN watch | sed -n 's/.*alive=\([0-9]*\).*/\1/p'); echo "$(now) t+${i}s after close: members alive=$a supervisor $(alive_rec $SUP $SUPST && echo alive || echo gone) user@$TUID $(systemctl is-active user@$TUID.service)"; done
+        login_state "$RUN: 30 s after every session closed, before the cgroup.kill write"
+        listing "30 s after every session closed, before the cgroup.kill write"
+        if alive_rec $SUP $SUPST; then touch $R/go; say "trigger written"; waitlog $R/sup.log 'DONE' 40; say "supervisor log:"; sed -n '/trigger seen/,$p' $R/sup.log
+        else say "supervisor $SUP is gone; supervisor log:"; cat $R/sup.log
+          if [[ -d $TREE ]]; then echo "\$ asuser $NODE $D/writer.cjs $RUN $TREE"; asuser $NODE $D/writer.cjs $RUN $TREE 2>&1; else say "tree cgroup $TREE does not exist: \$ ls -ld $TREE"; ls -ld $TREE 2>&1; fi
+          sleep 12; fi
+        listing "at least 12 s after the ending"
+        echo "\$ journalctl --no-pager -o short-iso-precise --since @${CASEST} _SYSTEMD_UNIT=systemd-logind.service + UNIT=user@$TUID.service + _SYSTEMD_UNIT=user@$TUID.service"
+        journalctl --no-pager -o short-iso-precise --since @${CASEST} _SYSTEMD_UNIT=systemd-logind.service + UNIT=user@$TUID.service + _SYSTEMD_UNIT=user@$TUID.service 2>&1 | tail -60;;
+  esac
+  recnew "$RUN-end"
+  end_survivors
+  [[ $ROUTE == rs ]] && { systemctl stop fx1459-rs@$c.service 2>/dev/null; systemctl reset-failed fx1459-rs@$c.service 2>/dev/null; }
+  [[ $ROUTE != rs ]] && systemctl is-active user@$TUID.service >/dev/null && asuser systemctl --user reset-failed fx1459-$RUN.service 2>/dev/null
+  sleep 1; listing "after cleanup"; wsl_alive "case $RUN end"
+}
+for c in $CASES; do CASEST=${EPOCHREALTIME%.*}; run_case $c; done
+recnew "end"; login_state "route $ROUTE, end"; winrec end; wsl_alive end; say "driver done"
+>>>
+--- output ---
+2026-11-22T03:47:36.587007Z script pid 406 ppid 405 starttime 10542; distro pid 1 starttime 10416; boot_id 93e1a4db-e2d2-416b-b58d-7145914f1de6 btime 1795319150; user under test rigger-spike uid 1001
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=406 starttime=10542 created=2026-11-22T03:47:35.42Z recorded=2026-11-22T03:47:36.587629Z label=script:fx1459r0a
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=405 starttime=10542 created=2026-11-22T03:47:35.42Z recorded=2026-11-22T03:47:36.613741Z label=init-parent
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=404 starttime=10539 created=2026-11-22T03:47:35.39Z recorded=2026-11-22T03:47:36.614322Z label=init-grandparent
+2026-11-22T03:47:36.615192Z this connection started the distro (pid 1 started 126 ticks before this script): recording that start, except [name withheld]'s processes
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=1 starttime=10416 created=2026-11-22T03:47:34.16Z recorded=2026-11-22T03:47:36.618193Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=100 starttime=10462 created=2026-11-22T03:47:34.62Z recorded=2026-11-22T03:47:36.620259Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=101 starttime=10462 created=2026-11-22T03:47:34.62Z recorded=2026-11-22T03:47:36.622238Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=102 starttime=10462 created=2026-11-22T03:47:34.62Z recorded=2026-11-22T03:47:36.624351Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=103 starttime=10462 created=2026-11-22T03:47:34.62Z recorded=2026-11-22T03:47:36.626355Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=104 starttime=10462 created=2026-11-22T03:47:34.62Z recorded=2026-11-22T03:47:36.628933Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=105 starttime=10462 created=2026-11-22T03:47:34.62Z recorded=2026-11-22T03:47:36.630949Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=106 starttime=10462 created=2026-11-22T03:47:34.62Z recorded=2026-11-22T03:47:36.632895Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=107 starttime=10462 created=2026-11-22T03:47:34.62Z recorded=2026-11-22T03:47:36.634836Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=108 starttime=10462 created=2026-11-22T03:47:34.62Z recorded=2026-11-22T03:47:36.636729Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=109 starttime=10462 created=2026-11-22T03:47:34.62Z recorded=2026-11-22T03:47:36.638672Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=110 starttime=10462 created=2026-11-22T03:47:34.62Z recorded=2026-11-22T03:47:36.640567Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=111 starttime=10462 created=2026-11-22T03:47:34.62Z recorded=2026-11-22T03:47:36.642495Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=112 starttime=10462 created=2026-11-22T03:47:34.62Z recorded=2026-11-22T03:47:36.644520Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=113 starttime=10462 created=2026-11-22T03:47:34.62Z recorded=2026-11-22T03:47:36.646510Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=114 starttime=10462 created=2026-11-22T03:47:34.62Z recorded=2026-11-22T03:47:36.648713Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=115 starttime=10462 created=2026-11-22T03:47:34.62Z recorded=2026-11-22T03:47:36.650771Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=116 starttime=10462 created=2026-11-22T03:47:34.62Z recorded=2026-11-22T03:47:36.652733Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=117 starttime=10462 created=2026-11-22T03:47:34.62Z recorded=2026-11-22T03:47:36.654610Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=118 starttime=10462 created=2026-11-22T03:47:34.62Z recorded=2026-11-22T03:47:36.656872Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=119 starttime=10462 created=2026-11-22T03:47:34.62Z recorded=2026-11-22T03:47:36.658854Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=120 starttime=10462 created=2026-11-22T03:47:34.62Z recorded=2026-11-22T03:47:36.660751Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=121 starttime=10462 created=2026-11-22T03:47:34.62Z recorded=2026-11-22T03:47:36.662721Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=122 starttime=10462 created=2026-11-22T03:47:34.62Z recorded=2026-11-22T03:47:36.664686Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=123 starttime=10462 created=2026-11-22T03:47:34.62Z recorded=2026-11-22T03:47:36.666691Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=124 starttime=10462 created=2026-11-22T03:47:34.62Z recorded=2026-11-22T03:47:36.668666Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=125 starttime=10462 created=2026-11-22T03:47:34.62Z recorded=2026-11-22T03:47:36.670744Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=126 starttime=10462 created=2026-11-22T03:47:34.62Z recorded=2026-11-22T03:47:36.672804Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=127 starttime=10462 created=2026-11-22T03:47:34.62Z recorded=2026-11-22T03:47:36.674844Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=128 starttime=10462 created=2026-11-22T03:47:34.62Z recorded=2026-11-22T03:47:36.676903Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=129 starttime=10462 created=2026-11-22T03:47:34.62Z recorded=2026-11-22T03:47:36.678881Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=130 starttime=10462 created=2026-11-22T03:47:34.62Z recorded=2026-11-22T03:47:36.680775Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=131 starttime=10462 created=2026-11-22T03:47:34.62Z recorded=2026-11-22T03:47:36.682781Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=132 starttime=10462 created=2026-11-22T03:47:34.62Z recorded=2026-11-22T03:47:36.684854Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=133 starttime=10462 created=2026-11-22T03:47:34.62Z recorded=2026-11-22T03:47:36.686917Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=134 starttime=10462 created=2026-11-22T03:47:34.62Z recorded=2026-11-22T03:47:36.689351Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=135 starttime=10462 created=2026-11-22T03:47:34.62Z recorded=2026-11-22T03:47:36.691411Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=136 starttime=10462 created=2026-11-22T03:47:34.62Z recorded=2026-11-22T03:47:36.693409Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=137 starttime=10462 created=2026-11-22T03:47:34.62Z recorded=2026-11-22T03:47:36.695474Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=138 starttime=10462 created=2026-11-22T03:47:34.62Z recorded=2026-11-22T03:47:36.697499Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=139 starttime=10462 created=2026-11-22T03:47:34.62Z recorded=2026-11-22T03:47:36.699548Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=140 starttime=10462 created=2026-11-22T03:47:34.62Z recorded=2026-11-22T03:47:36.701667Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=141 starttime=10462 created=2026-11-22T03:47:34.62Z recorded=2026-11-22T03:47:36.703754Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=142 starttime=10462 created=2026-11-22T03:47:34.62Z recorded=2026-11-22T03:47:36.705758Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=143 starttime=10462 created=2026-11-22T03:47:34.62Z recorded=2026-11-22T03:47:36.707863Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=144 starttime=10462 created=2026-11-22T03:47:34.62Z recorded=2026-11-22T03:47:36.709913Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=145 starttime=10462 created=2026-11-22T03:47:34.62Z recorded=2026-11-22T03:47:36.711968Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=146 starttime=10462 created=2026-11-22T03:47:34.62Z recorded=2026-11-22T03:47:36.714043Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=147 starttime=10462 created=2026-11-22T03:47:34.62Z recorded=2026-11-22T03:47:36.716062Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=148 starttime=10462 created=2026-11-22T03:47:34.62Z recorded=2026-11-22T03:47:36.718873Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=149 starttime=10462 created=2026-11-22T03:47:34.62Z recorded=2026-11-22T03:47:36.721120Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=150 starttime=10462 created=2026-11-22T03:47:34.62Z recorded=2026-11-22T03:47:36.723116Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=151 starttime=10462 created=2026-11-22T03:47:34.62Z recorded=2026-11-22T03:47:36.725143Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=152 starttime=10462 created=2026-11-22T03:47:34.62Z recorded=2026-11-22T03:47:36.727179Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=153 starttime=10462 created=2026-11-22T03:47:34.62Z recorded=2026-11-22T03:47:36.729159Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=154 starttime=10463 created=2026-11-22T03:47:34.63Z recorded=2026-11-22T03:47:36.731261Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=155 starttime=10463 created=2026-11-22T03:47:34.63Z recorded=2026-11-22T03:47:36.733491Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=156 starttime=10463 created=2026-11-22T03:47:34.63Z recorded=2026-11-22T03:47:36.735651Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=157 starttime=10463 created=2026-11-22T03:47:34.63Z recorded=2026-11-22T03:47:36.737779Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=158 starttime=10463 created=2026-11-22T03:47:34.63Z recorded=2026-11-22T03:47:36.739833Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=159 starttime=10463 created=2026-11-22T03:47:34.63Z recorded=2026-11-22T03:47:36.741895Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=160 starttime=10463 created=2026-11-22T03:47:34.63Z recorded=2026-11-22T03:47:36.743934Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=161 starttime=10463 created=2026-11-22T03:47:34.63Z recorded=2026-11-22T03:47:36.745854Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=162 starttime=10463 created=2026-11-22T03:47:34.63Z recorded=2026-11-22T03:47:36.747815Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=163 starttime=10463 created=2026-11-22T03:47:34.63Z recorded=2026-11-22T03:47:36.750205Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=164 starttime=10463 created=2026-11-22T03:47:34.63Z recorded=2026-11-22T03:47:36.752359Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=165 starttime=10463 created=2026-11-22T03:47:34.63Z recorded=2026-11-22T03:47:36.754324Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=166 starttime=10463 created=2026-11-22T03:47:34.63Z recorded=2026-11-22T03:47:36.756971Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=167 starttime=10463 created=2026-11-22T03:47:34.63Z recorded=2026-11-22T03:47:36.759066Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=168 starttime=10463 created=2026-11-22T03:47:34.63Z recorded=2026-11-22T03:47:36.761092Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=169 starttime=10463 created=2026-11-22T03:47:34.63Z recorded=2026-11-22T03:47:36.763070Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=170 starttime=10463 created=2026-11-22T03:47:34.63Z recorded=2026-11-22T03:47:36.765502Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=171 starttime=10463 created=2026-11-22T03:47:34.63Z recorded=2026-11-22T03:47:36.767531Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=172 starttime=10463 created=2026-11-22T03:47:34.63Z recorded=2026-11-22T03:47:36.769449Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=173 starttime=10463 created=2026-11-22T03:47:34.63Z recorded=2026-11-22T03:47:36.771532Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=174 starttime=10463 created=2026-11-22T03:47:34.63Z recorded=2026-11-22T03:47:36.773505Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=175 starttime=10463 created=2026-11-22T03:47:34.63Z recorded=2026-11-22T03:47:36.775468Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=2 starttime=10419 created=2026-11-22T03:47:34.19Z recorded=2026-11-22T03:47:36.777425Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=203 starttime=10471 created=2026-11-22T03:47:34.71Z recorded=2026-11-22T03:47:36.779625Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=204 starttime=10471 created=2026-11-22T03:47:34.71Z recorded=2026-11-22T03:47:36.781735Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=205 starttime=10471 created=2026-11-22T03:47:34.71Z recorded=2026-11-22T03:47:36.784275Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=209 starttime=10471 created=2026-11-22T03:47:34.71Z recorded=2026-11-22T03:47:36.786463Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=212 starttime=10472 created=2026-11-22T03:47:34.72Z recorded=2026-11-22T03:47:36.788533Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=213 starttime=10472 created=2026-11-22T03:47:34.72Z recorded=2026-11-22T03:47:36.790590Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=217 starttime=10473 created=2026-11-22T03:47:34.73Z recorded=2026-11-22T03:47:36.792789Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=233 starttime=10473 created=2026-11-22T03:47:34.73Z recorded=2026-11-22T03:47:36.794963Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=238 starttime=10475 created=2026-11-22T03:47:34.75Z recorded=2026-11-22T03:47:36.797256Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=264 starttime=10477 created=2026-11-22T03:47:34.77Z recorded=2026-11-22T03:47:36.799370Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=283 starttime=10478 created=2026-11-22T03:47:34.78Z recorded=2026-11-22T03:47:36.801342Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=284 starttime=10478 created=2026-11-22T03:47:34.78Z recorded=2026-11-22T03:47:36.803351Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=3 starttime=10419 created=2026-11-22T03:47:34.19Z recorded=2026-11-22T03:47:36.805382Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=330 starttime=10488 created=2026-11-22T03:47:34.88Z recorded=2026-11-22T03:47:36.807426Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=398 starttime=10523 created=2026-11-22T03:47:35.23Z recorded=2026-11-22T03:47:36.812688Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=407 starttime=10542 created=2026-11-22T03:47:35.42Z recorded=2026-11-22T03:47:36.818546Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=449 starttime=10581 created=2026-11-22T03:47:35.81Z recorded=2026-11-22T03:47:36.820603Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=45 starttime=10450 created=2026-11-22T03:47:34.50Z recorded=2026-11-22T03:47:36.822581Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=451 starttime=10581 created=2026-11-22T03:47:35.81Z recorded=2026-11-22T03:47:36.824503Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=474 starttime=10591 created=2026-11-22T03:47:35.91Z recorded=2026-11-22T03:47:36.826734Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=7 starttime=10430 created=2026-11-22T03:47:34.30Z recorded=2026-11-22T03:47:36.829932Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=77 starttime=10452 created=2026-11-22T03:47:34.52Z recorded=2026-11-22T03:47:36.832060Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=84 starttime=10455 created=2026-11-22T03:47:34.55Z recorded=2026-11-22T03:47:36.834118Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=96 starttime=10462 created=2026-11-22T03:47:34.62Z recorded=2026-11-22T03:47:36.836210Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=97 starttime=10462 created=2026-11-22T03:47:34.62Z recorded=2026-11-22T03:47:36.838187Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=98 starttime=10462 created=2026-11-22T03:47:34.62Z recorded=2026-11-22T03:47:36.840526Z label=boot:[name withheld]
+REC host=wsl boot=93e1a4db-e2d2-416b-b58d-7145914f1de6 pid=99 starttime=10462 created=2026-11-22T03:47:34.62Z recorded=2026-11-22T03:47:36.842800Z label=boot:[name withheld]
+2026-11-22T03:47:37.056863Z winrec start
+REC host=windows pid=36332 ppid=4156 created=2026-11-22T03:47:34.334Z recorded=2026-11-22T03:47:37.476Z label=start:sshd.exe:"C:\WINDOWS\System32\OpenSSH\sshd.exe" -R
+REC host=windows pid=32812 ppid=36332 created=2026-11-22T03:47:34.599Z recorded=2026-11-22T03:47:37.476Z label=start:sshd.exe:"C:\WINDOWS\System32\OpenSSH\sshd.exe" -z
+REC host=windows pid=8840 ppid=32812 created=2026-11-22T03:47:34.715Z recorded=2026-11-22T03:47:37.476Z label=start:cmd.exe:"c:\windows\system32\cmd.exe" /c "wsl.exe -u root -e bash -s fx1459r0a r0 n1 n3"
+REC host=windows pid=38144 ppid=8840 created=2026-11-22T03:47:34.720Z recorded=2026-11-22T03:47:37.476Z label=start:conhost.exe:\??\C:\WINDOWS\system32\conhost.exe 0x4
+REC host=windows pid=37408 ppid=8840 created=2026-11-22T03:47:34.736Z recorded=2026-11-22T03:47:37.476Z label=start:wsl.exe:wsl.exe -u root -e bash -s fx1459r0a r0 n1 n3
+REC host=windows pid=28208 ppid=37408 created=2026-11-22T03:47:34.743Z recorded=2026-11-22T03:47:37.476Z label=start:wsl.exe:wsl.exe -u root -e bash -s fx1459r0a r0 n1 n3
+REC host=windows pid=32716 ppid=4384 created=2026-11-22T03:47:34.864Z recorded=2026-11-22T03:47:37.476Z label=start:wslhost.exe: --[name withheld] [id withheld] --handle 3588
+REC host=windows pid=17612 ppid=32716 created=2026-11-22T03:47:34.874Z recorded=2026-11-22T03:47:37.476Z label=start:conhost.exe:\??\C:\WINDOWS\system32\conhost.exe 0x4
+REC host=windows pid=21236 ppid=32716 created=2026-11-22T03:47:34.901Z recorded=2026-11-22T03:47:37.476Z label=start:[name withheld]
+REC host=windows pid=32832 ppid=4384 created=2026-11-22T03:47:34.942Z recorded=2026-11-22T03:47:37.476Z label=start:wslhost.exe: --[name withheld] [id withheld] --handle 3520
+REC host=windows pid=18816 ppid=32832 created=2026-11-22T03:47:34.951Z recorded=2026-11-22T03:47:37.476Z label=start:conhost.exe:\??\C:\WINDOWS\system32\conhost.exe 0x4
+REC host=windows pid=5140 ppid=28208 created=2026-11-22T03:47:36.063Z recorded=2026-11-22T03:47:37.476Z label=start:wslhost.exe: --[name withheld] [id withheld] --[name withheld] [id withheld]
+REC host=windows pid=12840 ppid=5140 created=2026-11-22T03:47:36.073Z recorded=2026-11-22T03:47:37.476Z label=start:conhost.exe:\??\C:\WINDOWS\system32\conhost.exe 0x4
+REC host=windows pid=34312 ppid=28208 created=2026-11-22T03:47:37.067Z recorded=2026-11-22T03:47:37.476Z label=start:powershell.exe:powershell.exe -NoProfile -NonInteractive -EncodedCommand [name withheld]
+REC host=windows pid=30016 ppid=34312 created=2026-11-22T03:47:37.069Z recorded=2026-11-22T03:47:37.476Z label=start:conhost.exe:\??\C:\WINDOWS\system32\conhost.exe 0x4
+2026-11-22T03:47:37.624963Z WSL instance (start): boot_id 93e1a4db-e2d2-416b-b58d-7145914f1de6; distro pid 1 starttime 10416; uptime 106.98 s
+

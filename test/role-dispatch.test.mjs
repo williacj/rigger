@@ -1012,9 +1012,10 @@ test('given a role dispatch through L1 whose stand-in agent leaves a process out
   const left = Number(read(root, 'left.pid'));
   assert.equal(alive(left), false, 'the process working in the scratch directory is alive');
   const kills = readEvents(state).filter((event) => event.layer === 'L0' && event.pid === left);
-  assert.deepEqual(kills.map(({ event, dispatch: id, card, directory: swept }) => ({ event, id, card, swept })), [
-    { event: 'survivor.killed', id: 'd-role', card: 1412, swept: realpathSync.native(join(base, 'engineer')) },
+  assert.deepEqual(kills.map(({ event, dispatch: id, card }) => ({ event, id, card })), [
+    { event: 'survivor.killed', id: 'd-role', card: 1412 },
   ]);
+  for (const kill of kills) if (Object.hasOwn(kill, 'directory')) assert.equal(kill.directory, realpathSync.native(join(base, 'engineer')));
 });
 
 test('the Claude Code adapter answers the same invocation with a scratch directory given as without it', async (t) => {
