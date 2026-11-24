@@ -308,7 +308,9 @@ test('a dispatch\'s entry names each process the tracker adds, keeps it whatever
     await clock.advance(1000);
     await turn(t);
     assert.ok(world.reads.filter(({ args }) => args.includes('-A')).length >= 2, 'no tracker read followed the process\'s end, so this proves nothing');
-    assert.deepEqual(ran.tracked(), [{ pid: world.escaped, started: WORLD_STARTED }, { pid: later, started: WORLD_STARTED + 1 }], 'the entry was pruned');
+    // The entry is a set of identities: its order is not the record's to keep.
+    const byPid = (identities) => [...(identities ?? [])].sort((one, other) => one.pid - other.pid);
+    assert.deepEqual(byPid(ran.tracked()), byPid([{ pid: world.escaped, started: WORLD_STARTED }, { pid: later, started: WORLD_STARTED + 1 }]), 'the entry was pruned');
   });
   await t.test('R9: an entry keeps a tracked process through failed reads after its parent exits, and the next start ends it', async (t) => {
     const clock = manualClock(0);

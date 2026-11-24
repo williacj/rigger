@@ -712,13 +712,15 @@ test('R2: given the engine SIGKILLed after its tracker listed M6 and M6\'s paren
   const group = Number(read(world.directory, 'command.pid'));
   // The `gh` in `first/` reports at its first call whether the process at `child.pid` is alive.
   writeFileSync(join(world.directory, 'child.pid'), String(pids.M6));
-  // A read showed M6 with its parent in the group, and the tracker has begun a later read, so it
-  // has settled the one that showed it: the tracker never overlaps its reads.
+  // A read showed M6 outside the group with its parent in it, which is what the tracker adds, and
+  // the tracker has begun a later read, so it has settled the one that showed it: the tracker never
+  // overlaps its reads. A read taken before M6 left the group shows it as a member, which the
+  // tracker does not add.
   const listed = () => {
     const reads = existsSync(join(world.directory, 'tracker-reads')) ? read(world.directory, 'tracker-reads').split(/^read$/m).slice(1) : [];
     return reads.slice(0, -1).some((table) => {
       const rows = table.trim().split('\n').map((line) => line.trim().split(/\s+/).slice(0, 3).map(Number));
-      return rows.some(([pid, parent]) => pid === pids.M6 && parent === pids.M1) && rows.some(([pid, , pgid]) => pid === pids.M1 && pgid === group);
+      return rows.some(([pid, parent, pgid]) => pid === pids.M6 && parent === pids.M1 && pgid !== group) && rows.some(([pid, , pgid]) => pid === pids.M1 && pgid === group);
     });
   };
   await until(() => listed() || engine.exitCode !== null, t);
@@ -728,11 +730,17 @@ test('R2: given the engine SIGKILLed after its tracker listed M6 and M6\'s paren
   engine.kill('SIGKILL');
   await exited;
   assert.equal(alive(pids.M6), true, 'M6 did not outlive the engine, so this proves nothing');
+  // What a failure is read against: what the dead engine left recorded, and each whole-table read
+  // that showed M6, by its parent and group.
+  const left = readGroups(world.state);
+  const shown = read(world.directory, 'tracker-reads').split(/^read$/m).slice(1).map((table, index) => ({ index,
+    M6: table.trim().split('\n').map((line) => line.trim().split(/\s+/).slice(0, 3).map(Number)).find(([pid]) => pid === pids.M6) }));
 
   const ran = await restart(world, 'once');
 
   const first = atFirstCall(world);
-  assert.deepEqual(first.alive, [], ran.stderr);
+  const named = readEvents(world.state).filter((event) => event.pid === pids.M6 || ['recorded.unended', 'directory.unread', 'descendants.unread'].includes(event.event));
+  assert.deepEqual(first.alive, [], `${ran.stderr}\n${JSON.stringify({ group, M1: pids.M1, M6: pids.M6, left, shown, named, after: spawnSync('/bin/ps', ['-o', 'pid=,ppid=,pgid=,stat=,lstart=', '-p', String(pids.M6)], { encoding: 'utf8' }).stdout })}`);
   assert.match(first.call, /^call api graphql /, 'the first call is a board read');
   const { dispatch, card: killed, restarted } = restartRecord(world);
   const kills = restarted.filter((event) => event.event === 'recorded.killed' && event.pid === pids.M6);
