@@ -2874,19 +2874,20 @@ comment lines are outside it too: a comment cannot carry a bug.
 L0's row is the largest layer row, because L0 holds one adapter for each external system the other
 layers reach: the forge, git, the OS process model and each agent CLI. The forge adapter carries
 every read that L2's records rest on, the read of a card's body-edit history among them ("L2's
-acceptance, escalation and merge events"). The gate's row is the smallest, because the gate is one
-rule that holds no opinion ("The gate").
+acceptance, escalation and merge events"). The process adapter carries the one read that shows a
+process gone ("Signs of an earlier dispatch's process"). The gate's row is the smallest, because
+the gate is one rule that holds no opinion ("The gate").
 
 | Budget | Production lines |
 |---|---|
-| L0 | 3,200 |
-| L1 | 1,200 |
+| L0 | 3,370 |
+| L1 | 1,300 |
 | L2 | 1,600 |
 | The gate | 100 |
 | L3 | 1,700 |
 | L5 | 800 |
-| L6 | 1,100 |
-| CLI and config | 2,300 |
+| L6 | 760 |
+| CLI and config | 2,370 |
 | **Package** | **12,000** |
 
 CI runs one check, against the package total. A layer that grows past its own row is a review
