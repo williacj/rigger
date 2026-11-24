@@ -4,7 +4,7 @@
 import { realpathSync } from 'node:fs';
 import { isAbsolute, join, sep } from 'node:path';
 
-import { addGroup, holdsDispatch, partialPath, readGroups, removeGroup, removePartial, writeGroups } from './groups.mjs';
+import { addGroup, addTracked, holdsDispatch, partialPath, readGroups, removeGroup, removePartial, writeGroups } from './groups.mjs';
 import { listCliFolder, sweepCliFolder } from './workspace.mjs';
 import { gitEnvironment } from '../substrate/git-environment.mjs';
 import { EVENT_REFUSED, NOT_STARTED, identityOf, killRecordedGroup, runCommand } from '../substrate/process.mjs';
@@ -158,6 +158,10 @@ export async function dispatch({ id, card, directory, sink, provider, command, a
         addGroup(directory, { group, started, dispatch: id, card, ...(place === undefined ? {} : { workspace: place, ...identity }), ...(held === undefined ? {} : { scratch: held }) });
         recorded = group;
       },
+      // Each process L0's tracker adds is named in the entry, so a later start ends it after Rigger
+      // was killed outright or its exit ran past its budget. A rewrite that fails leaves it
+      // tracked in L0's memory alone ("Failure model").
+      onTracked: (group, added) => addTracked(directory, group, added),
       // On Rigger's own exit, L0 kills and records the group, and then hands it here with how the
       // command ended, its exit code or why its status could not be read, to remove its entry and
       // record the dispatch's end, which says why the entry was kept where the record refused its
@@ -411,10 +415,10 @@ async function killEntries({ directory, sink, host, readTimeout, entries }) {
   const unconfirmed = [];
   const unrecorded = [];
   for (const entry of entries) {
-    const { group, started, dispatch, card, workspace, device, inode, scratch } = entry;
+    const { group, started, dispatch, card, workspace, device, inode, scratch, tracked } = entry;
     const under = named(dispatch, card);
     try {
-      await killRecordedGroup({ group, started, directory: workspace, identity: { device, inode }, scratch, host, readTimeout, emitter: sink.emitter({ layer: 'L0', card, dispatch }) });
+      await killRecordedGroup({ group, started, tracked, directory: workspace, identity: { device, inode }, scratch, host, readTimeout, emitter: sink.emitter({ layer: 'L0', card, dispatch }) });
     } catch (failure) {
       if (failure.code !== EVENT_REFUSED) {
         kept.push(entry);

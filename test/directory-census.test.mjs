@@ -21,6 +21,8 @@ import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 import { listingOf } from './listing-stand-in.mjs';
 import { descendantCommand, descendantsReady } from './process-fixtures.mjs';
 import { manualClock } from './clock-report-world.mjs';
+import { startOf } from './process-fixtures.mjs';
+import { recordPath } from '../src/execution/groups.mjs';
 
 // A bound on the test alone, so that a dispatch which never settles fails here rather than
 // holding the suite: nothing waits on it when the dispatch settles.
@@ -797,4 +799,24 @@ test('given a dispatch running with a process that left its group, working in th
   assert.equal(await gone(left), true, 'the process working in the scratch directory is alive');
   const kills = readEvents(stateOf(directory)).filter((event) => event.event === 'survivor.killed' && event.pid === left);
   assert.deepEqual(kills.map(({ dispatch: id, card, directory: swept }) => ({ id, card, swept })), [{ id: 'd-term', card: 7, swept: join(directory, 'scratch') }], said);
+});
+
+// Host reason: OS behaviour; the real one-second tracker must read a real process in a session of its own into a record another real process reads.
+// Deterministic counterpart: test/exit-budget.test.mjs :: a dispatch's entry names each process the tracker adds, keeps it whatever later reads show, and its exit ends one whose rewrite failed
+test('R1: while a dispatch runs, a second process reading the record finds M6 by pid and start time in the dispatch\'s entry', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  let ended = false;
+  const settled = dispatchIn(directory, { id: 'd-recorded', card: 1467, command: descendantCommand(directory) }).finally(() => { ended = true; });
+  const pids = await descendantsReady(t, directory);
+  const named = { pid: pids.M6, started: startOf(pids.M6) };
+  // The second process is `cat`, which reads the record as any other reader would.
+  const readBack = () => {
+    const read = spawnSync('/bin/cat', [recordPath(stateOf(directory))], { encoding: 'utf8' });
+    return read.status === 0 ? JSON.parse(read.stdout).find(({ dispatch: id }) => id === 'd-recorded')?.tracked?.find(({ pid }) => pid === pids.M6) : undefined;
+  };
+  await until(() => readBack() !== undefined || ended, t);
+
+  assert.deepEqual(readBack(), named, 'no reader of the record found M6 while its dispatch ran');
+  writeFileSync(join(directory, 'release'), '');
+  await settled;
 });

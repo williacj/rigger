@@ -42,7 +42,8 @@ export function readGroups(directory) {
  * Whether `entry` names a group a dispatch can hold, the start of its leader, the dispatch's
  * directory by an absolute path where it has one, with its device and inode as decimal strings
  * where it has them, its scratch directory as `scratch`, an absolute `path` with its device and
- * inode likewise, where it has one, and a dispatch the record can hold. No group
+ * inode likewise, where it has one, its tracked processes as `tracked` where it has any, and a
+ * dispatch the record can hold. No group
  * Rigger creates has an id of 1 or less, and L0 signals a group by its id negated, so 1, 0 or a
  * negative id would reach launchd, the caller's own group, or every process.
  */
@@ -52,7 +53,14 @@ const isEntry = (entry) => typeof entry === 'object' && entry !== null
   && (entry.workspace === undefined || (typeof entry.workspace === 'string' && isAbsolute(entry.workspace)))
   && [entry.device, entry.inode].every(isDecimal)
   && (entry.scratch === undefined || (typeof entry.scratch === 'object' && entry.scratch !== null && typeof entry.scratch.path === 'string' && isAbsolute(entry.scratch.path) && [entry.scratch.device, entry.scratch.inode].every(isDecimal)))
+  && (entry.tracked === undefined || (Array.isArray(entry.tracked) && entry.tracked.every(isTracked)))
   && holdsDispatch(entry.dispatch, entry.card);
+
+/**
+ * Whether `each` names a tracked process by a pid L0 may signal and its start time. A pid of 1 or
+ * less would reach launchd, the caller's own group, or every process, as a group's id would.
+ */
+const isTracked = (each) => typeof each === 'object' && each !== null && Number.isSafeInteger(each.pid) && each.pid > 1 && Number.isSafeInteger(each.started);
 
 /** Whether `field` is absent or a decimal string, as a device or an inode is recorded. */
 const isDecimal = (field) => field === undefined || (typeof field === 'string' && /^\d+$/.test(field));
@@ -90,6 +98,9 @@ export const removePartial = (directory) => rmSync(partialPath(directory), { for
 
 /** Adds `entry` to the record in `directory`. */
 export const addGroup = (directory, entry) => writeGroups(directory, [...readGroups(directory), entry]);
+
+/** Names the tracked processes `added` in the entry for `group` in the record in `directory`, after those it names. */
+export const addTracked = (directory, group, added) => writeGroups(directory, readGroups(directory).map((entry) => (entry.group === group ? { ...entry, tracked: [...(entry.tracked ?? []), ...added] } : entry)));
 
 /** Removes the entry for `group` from the record in `directory`. */
 export const removeGroup = (directory, group) => writeGroups(directory, readGroups(directory).filter((entry) => entry.group !== group));

@@ -20,6 +20,7 @@ import { shellQuote } from './process-fixtures.mjs';
 import { PS } from '../src/substrate/process.mjs';
 import { realHost } from '../src/substrate/host.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
+import { assertUntouched, gone, holding, tailIn } from './process-fixtures.mjs';
 
 // A bound on the test alone, so that a call which never settles fails here rather than holding
 // the suite: nothing waits on it when the call settles.
@@ -1342,4 +1343,96 @@ test('given a sink that refuses every append and a record that refuses its rewri
   assertNamesKills(failure, named);
   assert.equal(failure.recordFailure?.code, 'EACCES', 'the rewrite\'s failure is not carried on the failure');
   assert.ok(failure.message.includes(state), `the failure does not say the record in ${state} was not rewritten: ${failure.message}`);
+});
+
+/** M6 of #1430: a `tail` in a session of its own, working in `/`, outside every group Rigger made. */
+const escapedIn = (t, directory) => tailIn(t, directory, '/');
+
+/** Every event the stream in `directory`'s state directory holds naming `pid`, by the fields a reader names it by. */
+const namingIn = (directory, pid) => (existsSync(streamPath(stateOf(directory))) ? readEvents(stateOf(directory)) : [])
+  .filter((event) => event.pid === pid)
+  .map(({ layer, dispatch, card, event, name, cmd }) => ({ layer, dispatch, card, event, name, cmd }));
+
+/** The kill of M6, as a later start records it under the entry's dispatch and card. */
+const escapedKill = (directory) => ({ layer: 'L0', dispatch: 'd-1', card: 1412, event: 'recorded.killed', name: 'tail', cmd: `/usr/bin/tail -f ${join(directory, 'hold')}` });
+
+// Host reason: OS behaviour; a real stop, start-time read and kill must end a real process in a session of its own.
+// Deterministic counterpart: test/exit-budget.test.mjs :: a later start ends a recorded tracked process it confirms, leaves one it cannot, and refuses a malformed tracked set
+// proves R-STATE-29
+test('R3: given an entry recording M6 by pid and start time, with its group confirmed, a later start ends M6 and records its kill', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const started = await startGroup(t, directory, 'group');
+  const escaped = await escapedIn(t, directory);
+  writeGroups(stateOf(directory), [entryFor(started, { tracked: [{ pid: escaped, started: startOf(escaped) }] })]);
+
+  await killIn(directory);
+
+  assert.equal(await gone(escaped), true, 'M6 outlived the later start');
+  assert.equal(alive(started.leader) || alive(started.member), false, 'the confirmed group outlived the later start');
+  assert.deepEqual(namingIn(directory, escaped), [escapedKill(directory)]);
+});
+
+// Host reason: OS behaviour; a real process outside an unconfirmed group must be ended while the group's real processes are left running.
+// Deterministic counterpart: test/exit-budget.test.mjs :: a later start ends a recorded tracked process it confirms, leaves one it cannot, and refuses a malformed tracked set
+// proves R-STATE-29
+test('R4: given an entry recording M6 whose recorded leader\'s start time differs, so its group is not confirmed, a later start still ends M6 and records its kill', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const started = await startGroup(t, directory, 'group');
+  const escaped = await escapedIn(t, directory);
+  writeGroups(stateOf(directory), [entryFor(started, { started: started.started - 1, tracked: [{ pid: escaped, started: startOf(escaped) }] })]);
+
+  await killIn(directory);
+
+  assert.equal(await gone(escaped), true, 'M6 outlived the later start');
+  assertUntouched(started.leader, 'the unconfirmed group\'s leader');
+  assertUntouched(started.member, 'the unconfirmed group\'s member');
+  assert.deepEqual(namingIn(directory, escaped), [escapedKill(directory)]);
+});
+
+// Host reason: OS behaviour; a real process whose start time differs from the record's must be left running and unstopped.
+// Deterministic counterpart: test/exit-budget.test.mjs :: a later start ends a recorded tracked process it confirms, leaves one it cannot, and refuses a malformed tracked set
+// proves R-STATE-29
+test('R5: given an entry recording a pid whose live process started at another time, a later start leaves that process alive and not stopped, and records it as not ended', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const started = await startGroup(t, directory, 'group');
+  const other = await escapedIn(t, directory);
+  writeGroups(stateOf(directory), [entryFor(started, { tracked: [{ pid: other, started: startOf(other) - 1 }] })]);
+
+  await killIn(directory);
+
+  assertUntouched(other, 'the process at the recorded pid');
+  assert.deepEqual(namingIn(directory, other).map(({ event, dispatch, card }) => ({ event, dispatch, card })), [{ event: 'recorded.unended', dispatch: 'd-1', card: 1412 }]);
+});
+
+// Host reason: wiring; an entry as the record held it before the tracked set must still end a real group.
+// Deterministic counterpart: test/exit-budget.test.mjs :: a later start ends a recorded tracked process it confirms, leaves one it cannot, and refuses a malformed tracked set
+test('R7: given an entry with no tracked-set field, as the record held it before it named tracked processes, a later start ends its group, records each kill and clears the record', SETTLES_WITHIN, async (t) => {
+  const directory = scratch(t);
+  const started = await startGroup(t, directory, 'group');
+  writeGroups(stateOf(directory), [entryFor(started)]);
+
+  await killIn(directory);
+
+  assert.equal(alive(started.leader) || alive(started.member), false, 'the group outlived the later start');
+  assert.deepEqual(killsIn(directory).map(({ pid }) => pid).sort(), [started.leader, started.member].sort());
+  assert.deepEqual(readEvents(stateOf(directory)).filter(({ event }) => event === 'recorded.unended'), []);
+  assert.deepEqual(readGroups(stateOf(directory)), []);
+});
+
+// Host reason: wiring; a refused record must leave a real group and a real process outside it running.
+// Deterministic counterpart: test/exit-budget.test.mjs :: a later start ends a recorded tracked process it confirms, leaves one it cannot, and refuses a malformed tracked set
+test('R8: given a record whose tracked process has no start time, or a pid of 0, -1, 1 or no integer, a later start ends nothing and fails naming the record', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const started = await startGroup(t, directory, 'group');
+  const escaped = await escapedIn(t, directory);
+  for (const tracked of [{ pid: escaped }, ...[0, -1, 1, escaped + 0.5, String(escaped)].map((pid) => ({ pid, started: startOf(escaped) }))]) {
+    writeGroups(stateOf(directory), [entryFor(started, { tracked: [tracked] })]);
+
+    await assert.rejects(killIn(directory), (failure) => {
+      assert.ok(failure.message.includes(recordPath(stateOf(directory))), `the failure does not name the record for ${JSON.stringify(tracked)}: ${failure.message}`);
+      return true;
+    });
+
+    for (const [pid, what] of [[started.leader, 'leader'], [started.member, 'member'], [escaped, 'M6']]) assertUntouched(pid, `the ${what}, for ${JSON.stringify(tracked)}`);
+  }
 });

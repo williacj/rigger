@@ -251,6 +251,7 @@ function* tracking(dispatches, host) {
       const matching = table.filter(({ pid, started }) => !call.tracked.has(pid) || call.tracked.get(pid) === started);
       const parents = new Set(matching.filter(({ group }) => group === call.child.pid).map(({ pid }) => pid));
       for (const { pid } of matching) if (call.tracked.has(pid)) parents.add(pid);
+      const added = [];
       let grew;
       do {
         grew = false;
@@ -258,21 +259,48 @@ function* tracking(dispatches, host) {
           if (parents.has(member.pid) || !parents.has(member.parent)) continue;
           parents.add(member.pid);
           call.tracked.set(member.pid, member.started);
+          added.push({ pid: member.pid, started: member.started });
           grew = true;
         }
       } while (grew);
+      // A caller that cannot record what this read added leaves it tracked here alone, so the
+      // dispatch's ending still ends it ("Failure model"), and its failure fails no read.
+      try {
+        if (added.length > 0) call.onTracked?.(call.child.pid, added);
+      } catch {
+        // Kept in memory; the record names it no more than the caller managed to write.
+      }
     }
   } catch (error) {
     for (const call of recipients()) call.trackerUnread = error.message;
   }
 }
 
-/** Selects recorded identities by pid, and confirms them again while the sweep holds them stopped. */
-function* trackedIn(tracked, pids = [...tracked.keys()]) {
+/**
+ * Selects recorded identities by pid, and confirms them again while the sweep holds them stopped.
+ * Given `unended`, as a later start's sweep is, it names there each pid it drops and why, and takes
+ * a start time it cannot read, or a read that fails, as one that no longer matches.
+ */
+function* trackedIn(tracked, pids = [...tracked.keys()], unended) {
   if (pids.length === 0) return [];
-  const rows = rowsOf(yield ['-p', pids.join(','), '-o', 'pid=,lstart=']);
+  let rows;
+  try {
+    rows = rowsOf(yield ['-p', pids.join(','), '-o', 'pid=,lstart=']);
+  } catch (error) {
+    // A later start takes a start time it cannot read as one that no longer matches, each read's
+    // failure as each pid's unreadable start.
+    if (unended === undefined) throw error;
+    rows = new Map(pids.map((pid) => [pid, error.message]));
+  }
   return [...rows].filter(([pid, start]) => {
-    if (secondsOf(start) === tracked.get(pid)) return true;
+    let seconds;
+    try {
+      seconds = secondsOf(start);
+    } catch (error) {
+      if (unended === undefined) throw error;
+    }
+    if (seconds === tracked.get(pid)) return true;
+    unended?.set(pid, `L0 could not confirm it is the process recorded as started at ${tracked.get(pid)}, so it left it: ${seconds === undefined ? `its start time could not be read: ${start}` : `its start time is ${seconds}`}`);
     tracked.delete(pid);
     return false;
   }).map(([pid]) => pid);
@@ -1662,7 +1690,7 @@ function* reaped(pids, kill, bound, observed = new Map(), now = realHost.clock.n
  * stopped in the directory. A process the call's had stopped and not yet listed again, which can
  * only be a pid handed on to a process outside it between a list and the stop, stays stopped.
  */
-function* sweeping(directory, lsof, kill, observeAfterKill = false, host = realHost, tracked) {
+function* sweeping(directory, lsof, kill, observeAfterKill = false, host = realHost, tracked, unended) {
   const kills = [];
   const observed = new Map();
   // Stopped and not yet listed again; and listed again, stopped, and not yet killed.
@@ -1675,7 +1703,7 @@ function* sweeping(directory, lsof, kill, observeAfterKill = false, host = realH
   // When it first sent a process the kill.
   let killedAt;
   const list = function* (pids) {
-    if (tracked !== undefined) return yield* trackedIn(tracked, pids);
+    if (tracked !== undefined) return yield* trackedIn(tracked, pids, unended);
     const printed = yield { tool: lsof, args: listing(pids, host) };
     return (Array.isArray(directory) ? directory : [directory]).flatMap((place) => workingIn(printed, place, host).map((pid) => { locations.set(pid, place); return pid; }));
   };
@@ -1749,10 +1777,10 @@ function* sweeping(directory, lsof, kill, observeAfterKill = false, host = realH
  * be read, a `directory.unread` event naming the directory and why, and each process it then
  * killed unnamed. Of a directory `illegible` refuses, that event says why, and nothing is killed.
  */
-async function swept(directory, { ps, lsof, readTimeout, kill = SIGNAL, host = realHost }, killed, tracked) {
+async function swept(directory, { ps, lsof, readTimeout, kill = SIGNAL, host = realHost }, killed, tracked, unended) {
   const why = tracked === undefined ? illegible(directory) : undefined;
   if (why !== undefined) return sweptEvents(directory, { kills: [], unread: why, unnamed: [], unended: [] }, killed);
-  const found = await reading(sweeping(directory, lsof, kill, false, host, tracked), ps, readTimeout, undefined, undefined, host);
+  const found = await reading(sweeping(directory, lsof, kill, false, host, tracked, unended), ps, readTimeout, undefined, undefined, host);
   return sweptEvents(directory, await reading(settled(found, kill, KILL_BOUND, host.clock.now), ps, readTimeout, host.clock.now() + KILL_BOUND + readTimeout, undefined, host), killed);
 }
 
@@ -1914,8 +1942,13 @@ function refused(unrecorded, result, ending = '') {
  * The step can come after the call has settled, in the turn it settled, and must then do
  * nothing for a call its caller has finished. A process kept running past its ending still has the
  * call settle, on the command's result.
+ *
+ * `onTracked`, where the caller gives one, is handed the group's id and each process a read of the
+ * tracker adds to a dispatch's tracked set, by pid and start time, in the read that adds it. L1
+ * names them in the dispatch's entry there. Where it throws, each stays tracked in L0's memory
+ * alone, and the dispatch's ending still ends it ("Failure model").
  */
-export async function runCommand({ command, args, cwd, env, input, timeout, emitter, onGroup, onExit, directory, scratch, track = false, host = realHost, readTimeout = READ_TIMEOUT, outputBound = OUTPUT_BOUND, trace }) {
+export async function runCommand({ command, args, cwd, env, input, timeout, emitter, onGroup, onExit, onTracked, directory, scratch, track = false, host = realHost, readTimeout = READ_TIMEOUT, outputBound = OUTPUT_BOUND, trace }) {
   requireClock(host.clock);
   const { ps, lsof, signal: kill } = host;
   // The caller opens the emitter, so an `L0` event carries the card L0 never knows. There is no
@@ -1951,7 +1984,7 @@ export async function runCommand({ command, args, cwd, env, input, timeout, emit
     child.stdin.end(input);
   }
   const output = Promise.all([drained(child.stdout), drained(child.stderr)]);
-  const call = { emitter, host, ps, lsof, readTimeout, kill, onExit, trace, directory: real, scratch: scratchReal, child, events: [], contained: false };
+  const call = { emitter, host, ps, lsof, readTimeout, kill, onExit, onTracked, trace, directory: real, scratch: scratchReal, child, events: [], contained: false };
   if (track) call.tracked = new Map();
   calls.set(child.pid, call);
   // A call the exit cleanup took is one it has ended and recorded, so the call records nothing
@@ -2030,12 +2063,22 @@ export async function runCommand({ command, args, cwd, env, input, timeout, emit
  * there and records a `directory.skipped` event naming the path and why, and the group's kill
  * stands as it is (the architect's ruling 7 on #467). Where L1 recorded the dispatch's `scratch`
  * directory, as its `path`, `device` and `inode`, its census follows on the same terms (ruling 20).
+ *
+ * Before the group's kill, it ends each of the dispatch's `tracked` processes, each by its `pid`
+ * and `started`, whether or not the group is the one recorded, through the sweep's stop and
+ * start-time confirmation, recording each it killed as `recorded.killed`. One whose start time no
+ * longer matches, or cannot be read, it leaves alive and running, and records as
+ * `recorded.unended` with why. One no read lists has already ended, and it records nothing of it
+ * (`ARCHITECTURE.md`, "Failure model").
  */
-export async function killRecordedGroup({ group, started, emitter, directory, identity, scratch, host = realHost, readTimeout = READ_TIMEOUT }) {
+export async function killRecordedGroup({ group, started, tracked = [], emitter, directory, identity, scratch, host = realHost, readTimeout = READ_TIMEOUT }) {
   requireClock(host.clock);
   const { ps, lsof, signal: kill } = host;
   const starts = await startsIn(ps, group, readTimeout, host);
-  const kills = recorded(group, started, starts) ? await contain(group, { ps, readTimeout, kill, host }, 'recorded.killed') : [];
+  const unended = new Map();
+  const kills = await swept(undefined, { ps, lsof, readTimeout, kill, host }, 'recorded.killed', new Map(tracked.map(({ pid, started: start }) => [pid, start])), unended);
+  kills.push(...[...unended].map(([pid, reason]) => ['recorded.unended', { pid, reason }]));
+  if (recorded(group, started, starts)) kills.push(...(await contain(group, { ps, readTimeout, kill, host }, 'recorded.killed')));
   const recordedDirectories = [[directory, identity], ...(scratch === undefined ? [] : [[scratch.path, scratch]])];
   for (const [each, held] of recordedDirectories) {
     if (each === undefined) continue;
