@@ -1,0 +1,22 @@
+#!/bin/bash
+# ABOUTME: Records one command for #1462: its UTC times, exact argv and exit in record.txt, and its
+# full output under runs/. A value held in SPIKE_SOURCE, SPIKE_ARCHIVE or SPIKE_DIGEST is a private
+# identifier, and is written to the record as a fixed placeholder as it is captured.
+set -u
+here=$(cd "$(dirname "$0")" && pwd)
+n=$(printf '%03d' $(( $(ls "$here/runs" | wc -l) + 1 )))
+shown=
+for arg in "$@"; do
+  case $arg in
+    "${SPIKE_SOURCE:-//}") arg='<source>' ;;
+    "${SPIKE_ARCHIVE:-//}") arg='<archive>' ;;
+    "${SPIKE_DIGEST:-//}") arg='<digest>' ;;
+  esac
+  shown="$shown $(printf '%q' "$arg" | sed 's/\\</</; s/\\>/>/')"
+done
+start=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+"$@" > "$here/runs/$n.txt" 2>&1
+status=$?
+printf '### run %s\nstart %s\ncommand%s\nexit %s\nend %s\n\n' "$n" "$start" "$shown" "$status" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$here/record.txt"
+cat "$here/runs/$n.txt"
+exit $status

@@ -1,0 +1,381 @@
+// ABOUTME: #1462's one command. It reads the event stream in the directory it is given, keeps only the
+// fields the card lists, prints the line totals and every count, and, given an archive directory and
+// the digest a checker passed, also writes the filtered lines there as the extract.
+
+// Usage, all read-only on the source directory:
+//   node count.mjs <directory>                      totals and counts; writes nothing
+//   node count.mjs <directory> --lines              the filtered lines alone, the extract's exact bytes
+//   node count.mjs <directory> <archive> <digest>   the counts, and the extract, where its sha256 is <digest>
+// A judge reruns it as `node count.mjs <archive>`, because the extract is named as a stream is.
+// Exit: 0 done; 2 usage or unreadable source; 3 a later event, nothing counted or written; 4 no extract written.
+
+import { createHash } from 'node:crypto';
+import { closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+
+const SELECTOR = Date.parse('2026-11-24T15:35:09.000Z');
+const STREAM = 'events.jsonl';
+const LINE_START = '{"ts":"';
+const MARKS = ['reason', 'unread', 'kept', 'step', 'census', 'maker'];
+const LAYERS = ['L0', 'L1', 'L2', 'L3', 'L4', 'L5', 'L6'];
+const UUID = '[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}';
+const text = (pattern) => (value) => typeof value === 'string' && pattern.test(value);
+const among = (...values) => (value) => values.includes(value);
+const whole = (least) => (value) => Number.isSafeInteger(value) && value >= least;
+
+/** Each listed field's shape, as src/ at b23d656d writes it. A value outside its shape is never kept. */
+const SHAPES = {
+  ts: (value) => typeof value === 'string' && Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value,
+  run: text(new RegExp(`^${UUID}$`)),
+  layer: among(...LAYERS),
+  event: text(/^(?=.{1,40}$)[a-z]+(?:[.-][a-z]+){0,3}$/),
+  card: whole(1),
+  dispatch: (value) => value === null || text(new RegExp(`^d-${UUID}$`))(value),
+  exit: whole(0),
+  ms: (value) => typeof value === 'number' && Number.isFinite(value) && value >= 0,
+  role: text(/^[A-Za-z][A-Za-z0-9_-]{0,39}$/),
+  attempt: whole(1),
+  class: among('environment', 'card-local', 'out'),
+  outcome: among('ok', 'failed', 'timed-out', 'pushed', 'merged', 'already merged', 'not merged', 'refused', 'job', 'abandoned', 'card'),
+  system: among('forge', 'git'),
+  concurrency: whole(1),
+};
+/** What stands for a value outside its shape where a line needs the field to be an event. */
+const PLACEHOLDER = 'other';
+
+const sha = (bytes) => createHash('sha256').update(bytes).digest('hex');
+const fail = (status, message) => { process.stderr.write(`${message}\n`); process.exit(status); };
+
+/** The source's bytes: a regular file, never a symbolic link. No path is ever printed. */
+function bytesOf(directory) {
+  try {
+    const fd = openSync(join(directory, STREAM), constants.O_RDONLY | constants.O_NOFOLLOW);
+    try {
+      if (!fstatSync(fd).isFile()) throw Object.assign(new Error(), { code: 'not a regular file' });
+      return readFileSync(fd);
+    } finally {
+      closeSync(fd);
+    }
+  } catch (failure) {
+    return fail(2, `the stream could not be read: ${failure.code}`);
+  }
+}
+
+/** Whether `value` is an event by the sink's own read boundary (`checkEventEnvelope`, src/observation/sink.mjs). */
+const isEvent = (value) => value !== null && typeof value === 'object' && !Array.isArray(value)
+  && SHAPES.ts(value.ts) && ['run', 'event'].every((field) => typeof value[field] === 'string' && value[field] !== '')
+  && LAYERS.includes(value.layer)
+  && (!Object.hasOwn(value, 'card') || whole(1)(value.card))
+  && (!Object.hasOwn(value, 'dispatch') || value.dispatch === null || (typeof value.dispatch === 'string' && value.dispatch !== ''));
+
+function parsed(line) {
+  try {
+    const value = JSON.parse(line);
+    return isEvent(value) ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** The event after a line's torn fragments, by `ARCHITECTURE.md`'s "A torn tail", rule 3. */
+function afterFragment(line) {
+  if (!line.startsWith('{')) return undefined;
+  for (let at = line.indexOf(LINE_START, 1); at !== -1; at = line.indexOf(LINE_START, at + 1)) {
+    const event = parsed(line.slice(at));
+    if (event !== undefined) return event;
+  }
+  return undefined;
+}
+
+/** Whether a line that is no event still opens, at any offset a sink line begins, on a later `ts`. */
+function opensLater(line) {
+  for (let at = line.indexOf(LINE_START); at !== -1; at = line.indexOf(LINE_START, at + 1)) {
+    if (Date.parse(line.slice(at + LINE_START.length).split('"', 1)[0]) > SELECTOR) return true;
+  }
+  return false;
+}
+
+/** Every line of `bytes` read: the totals, the events kept, and the digest of the window's lines. */
+function readLines(bytes) {
+  const window = createHash('sha256');
+  const totals = { read: 0, later: 0, unparsed: 0, kept: 0, fragments: 0 };
+  const events = [];
+  for (let start = 0; start < bytes.length;) {
+    const newline = bytes.indexOf(0x0a, start);
+    const stop = newline === -1 ? bytes.length : newline + 1;
+    const line = bytes.toString('utf8', start, newline === -1 ? stop : newline);
+    totals.read += 1;
+    // The bytes after the last newline are no event yet (rule 1), so they are read and not parsed.
+    const direct = newline === -1 ? undefined : parsed(line);
+    const event = direct ?? (newline === -1 ? undefined : afterFragment(line));
+    if (event === undefined ? opensLater(line) : Date.parse(event.ts) > SELECTOR) totals.later += 1;
+    else {
+      window.update(bytes.subarray(start, stop));
+      if (event === undefined) totals.unparsed += 1;
+      else {
+        totals.kept += 1;
+        if (direct === undefined) totals.fragments += 1;
+        events.push(event);
+      }
+    }
+    start = stop;
+  }
+  return { totals, events, window: window.digest('hex') };
+}
+
+/** `event` as the extract holds it: the listed fields in their shapes, and the six marks. */
+function filtered(event, dropped) {
+  const out = {};
+  for (const [field, shape] of Object.entries(SHAPES)) {
+    if (!Object.hasOwn(event, field)) continue;
+    if (shape(event[field])) out[field] = event[field];
+    else if (event[field] === PLACEHOLDER && ['run', 'event'].includes(field)) out[field] = PLACEHOLDER;
+    else {
+      dropped.set(field, (dropped.get(field) ?? 0) + 1);
+      if (['run', 'event'].includes(field)) out[field] = PLACEHOLDER;
+    }
+  }
+  for (const mark of MARKS) out[mark] = Object.hasOwn(event, mark) && event[mark] !== false;
+  return out;
+}
+
+const group = (items, key) => {
+  const groups = new Map();
+  for (const item of items) {
+    const name = key(item);
+    if (!groups.has(name)) groups.set(name, []);
+    groups.get(name).push(item);
+  }
+  return groups;
+};
+const tally = (items, key) => [...group(items, key)].map(([name, found]) => [name, found.length]).sort(([a], [b]) => (a < b ? -1 : 1));
+const listed = (pairs) => (pairs.length === 0 ? 'none' : pairs.map(([name, count]) => `${name}: ${count}`).join(', '));
+const hours = (ms) => (ms / 3_600_000).toFixed(4);
+
+/** An event L0's exit cleanup can record: a containment event, or the dispatch's end (process.mjs's `cleanup`). */
+const cleanupEvent = (event) => (event.layer === 'L0' && !['call.end', 'fetch.retried'].includes(event.event))
+  || (event.layer === 'L1' && event.event === 'dispatch.end');
+
+/** Everything printed under "counts", from the filtered events alone, so the extract gives the same. */
+function count(events) {
+  const out = [];
+  const say = (label, shown) => out.push(`${label}: ${shown}`);
+  events.forEach((event, at) => { Object.defineProperty(event, 'at', { value: at }); Object.defineProperty(event, 'time', { value: Date.parse(event.ts) }); });
+  const is = (layer, name) => (event) => event.layer === layer && event.event === name;
+  const runs = group(events, (event) => event.run);
+  const last = (run) => runs.get(run).at(-1);
+
+  // Claims, as report.mjs's `workClaims` and `attempts` derive them (b23d656d, src/observation/report.mjs).
+  const claims = [];
+  const dispatches = new Map();
+  const of = (id) => {
+    if (!dispatches.has(id)) dispatches.set(id, { id });
+    return dispatches.get(id);
+  };
+  const tails = new Map();
+  for (const [run, recorded] of runs) {
+    let tail = recorded.length;
+    while (tail > 0 && cleanupEvent(recorded[tail - 1])) tail -= 1;
+    tails.set(run, tail === recorded.length ? Infinity : recorded[tail].at);
+    const current = new Map();
+    for (const event of recorded) {
+      if (event.layer === 'L3' && event.card != null) {
+        if (event.event === 'pull') {
+          const claim = { pull: event, run, card: event.card, merging: false, did: [], released: false };
+          if (current.has(event.card)) current.get(event.card).followed = true;
+          current.set(event.card, claim);
+          claims.push(claim);
+        }
+        const claim = current.get(event.card);
+        if (claim !== undefined) {
+          if (event.event === 'merge.start') claim.merging = true;
+          if (event.event === 'dispatch') claim.did.push(event);
+          if (event.event === 'slot.release') claim.released = true;
+        }
+      }
+      if (event.dispatch == null) continue;
+      if (is('L3', 'dispatch')(event)) Object.assign(of(event.dispatch), { asked: event, claim: current.get(event.card) });
+      if (is('L1', 'dispatch.start')(event) && of(event.dispatch).start === undefined) Object.assign(of(event.dispatch), { start: event, claim: of(event.dispatch).claim ?? current.get(event.card) });
+      if (is('L1', 'dispatch.end')(event)) of(event.dispatch).end ??= event;
+      if (is('L1', 'dispatch.timeout')(event)) of(event.dispatch).timeout ??= event;
+      if (is('L0', 'recorded.killed')(event)) (of(event.dispatch).killed ??= []).push(event);
+    }
+  }
+  claims.sort((a, b) => a.pull.at - b.pull.at);
+  const work = claims.filter((claim) => !claim.merging);
+  const did = work.filter((claim) => claim.did.length > 0);
+  const redos = [];
+  const previous = new Map();
+  for (const claim of did) {
+    const earlier = previous.get(claim.card);
+    if (earlier && earlier.run !== claim.run && !earlier.released) { redos.push(claim); earlier.redo = claim; }
+    previous.set(claim.card, claim);
+  }
+
+  // The endings, one per started dispatch.
+  const kindOf = ({ asked }) => (asked === undefined ? 'unknown kind' : asked.step ? 'provisioning step' : asked.attempt !== undefined ? 'maker' : 'judge or other role');
+  const started = [...dispatches.values()].filter(({ start }) => start !== undefined).sort((a, b) => a.start.at - b.start.at);
+  for (const one of started) {
+    const { start, end, timeout, claim } = one;
+    const released = claim?.released === true;
+    // An end in its run's tail of cleanup events, or one carrying what only exit cleanup writes.
+    const cleanup = end !== undefined && !released && (end.at >= tails.get(end.run) || end.unread || end.kept);
+    if (end === undefined) one.row = released || claim?.followed ? 'X' : 'D1';
+    else if (end.reason) one.row = 'D5';
+    else if (timeout !== undefined) one.row = 'D4';
+    else if (end.exit === undefined && !end.unread) one.row = 'X';
+    else if (cleanup) one.row = 'D2';
+    else if (end.unread) one.row = 'X';
+    else one.row = end.exit === 0 ? 'completed' : 'D3';
+    one.kind = kindOf(one);
+    one.run = start.run;
+  }
+  const row = (name) => started.filter((one) => one.row === name);
+
+  say('window, first kept event', events[0]?.ts ?? 'none');
+  say('window, last kept event', events.reduce((latest, event) => (latest === undefined || event.time > latest.time ? event : latest), undefined)?.ts ?? 'none');
+  say('runs', runs.size);
+  say('runs with a run.start', [...runs.values()].filter((recorded) => recorded.some(is('L3', 'run.start'))).length);
+  const pulling = [...runs.values()].filter((recorded) => recorded.some(is('L3', 'pull')));
+  say('runs with a pull', pulling.length);
+  const span = (recorded) => recorded.at(-1).time - recorded[0].time;
+  say('engine hours, the spans of runs with a pull', hours(pulling.reduce((sum, recorded) => sum + span(recorded), 0)));
+  say('runs with a pull whose spans overlap, pairs', pulling.reduce((sum, one, at) => sum + pulling.slice(at + 1).filter((other) => one[0].time < other.at(-1).time && other[0].time < one.at(-1).time).length, 0));
+  say('run.start by concurrency', listed(tally(events.filter(is('L3', 'run.start')), (event) => event.concurrency ?? 'none')));
+  say('work claims', work.length);
+  say('work claims that dispatched', did.length);
+  say('work claims interrupted', work.filter((claim) => !claim.released).length);
+  const dead = new Set([...row('D1'), ...row('D2')].map(({ claim }) => claim));
+  say('work claims interrupted, holding a D1 or D2 dispatch', work.filter((claim) => !claim.released && dead.has(claim)).length);
+  say('work claims interrupted, holding none', work.filter((claim) => !claim.released && !dead.has(claim)).length);
+  say('first attempts', did.length - redos.length);
+  say('redos after an interruption', redos.length);
+  say('merge.start with no later merge.end of that card in its run', events.filter((event) => is('L3', 'merge.start')(event) && !runs.get(event.run).some((later) => later.at > event.at && is('L3', 'merge.end')(later) && later.card === event.card)).length);
+  say('host faults, as report counts them', events.filter((event) => event.layer === 'L2' && event.card != null && (['maker.failed', 'judge.withheld'].includes(event.event) || (event.event === 'attempt.failed' && event.class === 'environment' && !event.maker))).length);
+  say('dispatches started', started.length);
+  for (const kind of ['maker', 'judge or other role', 'provisioning step', 'unknown kind']) say(`dispatches started, ${kind}`, started.filter((one) => one.kind === kind).length);
+  say('dispatches started under no claim', started.filter(({ claim }) => claim === undefined).length);
+  const unstarted = [...dispatches.values()].filter(({ asked, start }) => asked !== undefined && start === undefined);
+  say('L3 dispatches with no dispatch.start', `${unstarted.length} (claim released: ${unstarted.filter(({ claim }) => claim?.released).length}, claim not released: ${unstarted.filter(({ claim }) => !claim?.released).length})`);
+  say('dispatch.end or dispatch.timeout with no dispatch.start', [...dispatches.values()].filter(({ start, end, timeout }) => start === undefined && (end ?? timeout) !== undefined).length);
+
+  say('completed, exit 0', row('completed').length);
+  say('D1 dispatches', row('D1').length);
+  const alive = (one) => (one.killed ?? []).some((event) => event.run !== one.run && event.at > one.start.at);
+  say('D1 with a recorded.killed from a later run', row('D1').filter(alive).length);
+  say('D1 without one', row('D1').filter((one) => !alive(one)).length);
+  const nextStart = (one) => events.find((event) => event.at > last(one.run).at && event.run !== one.run && (is('L3', 'run.start')(event) || is('L3', 'trigger')(event)));
+  say('D1 with no later run.start or trigger of another run', row('D1').filter((one) => nextStart(one) === undefined).length);
+  say('D2 dispatches', row('D2').length);
+  const exits = (found) => `exit 0: ${found.filter(({ end }) => end.exit === 0).length}, exit 1 to 128: ${found.filter(({ end }) => end.exit > 0 && end.exit <= 128).length}, exit above 128: ${found.filter(({ end }) => end.exit > 128).length}, unread: ${found.filter(({ end }) => end.exit === undefined).length}`;
+  say('D2 by how it ended', exits(row('D2')));
+  say('D3 dispatches', row('D3').length);
+  say('D3 of agents', row('D3').filter(({ kind }) => kind !== 'provisioning step').length);
+  say('D3 of provisioning steps', row('D3').filter(({ kind }) => kind === 'provisioning step').length);
+  say('D3 with exit above 128', row('D3').filter(({ end }) => end.exit > 128).length);
+  say('D3 in a claim with no slot.release', row('D3').filter(({ claim }) => !claim?.released).length);
+  say('D4 dispatches', row('D4').length);
+  say('D5 dispatches', row('D5').length);
+  say('no ending fits', row('X').length);
+
+  const deaths = group([...row('D1'), ...row('D2')], ({ run }) => run);
+  const rowsOf = (found) => new Set(found.map((one) => one.row));
+  say('engine deaths, runs with a D1 or D2 dispatch', deaths.size);
+  say('engine deaths, D1 only', [...deaths.values()].filter((found) => !rowsOf(found).has('D2')).length);
+  say('engine deaths, D2 only', [...deaths.values()].filter((found) => !rowsOf(found).has('D1')).length);
+  say('engine deaths, both', [...deaths.values()].filter((found) => rowsOf(found).size === 2).length);
+  say('engine deaths in a run with a run.start', [...deaths.keys()].filter((run) => runs.get(run).some(is('L3', 'run.start'))).length);
+
+  const ended = started.filter(({ end }) => end !== undefined && !end.reason);
+  say('dispatch hours, ended dispatches', hours(ended.reduce((sum, { end }) => sum + (end.ms ?? 0), 0)));
+  say('dispatch.end with no ms', ended.filter(({ end }) => end.ms === undefined).length);
+  const open = started.filter(({ end }) => end === undefined);
+  const streamEnd = events.at(-1)?.time;
+  const lower = (one) => last(one.run).time - one.start.time;
+  const upper = (one) => (nextStart(one)?.time ?? streamEnd) - one.start.time;
+  say('dispatch hours, starts with no end, to the run\'s last event', hours(open.reduce((sum, one) => sum + lower(one), 0)));
+  say('dispatch hours, starts with no end, to the next run\'s start', hours(open.reduce((sum, one) => sum + upper(one), 0)));
+
+  for (const [name, least] of [['10 minutes', 600_000], ['1 hour', 3_600_000]]) {
+    let flying = 0;
+    let idle = 0;
+    for (const recorded of runs.values()) {
+      for (let at = 1; at < recorded.length; at += 1) {
+        const [before, after] = [recorded[at - 1], recorded[at]];
+        if (after.time - before.time < least) continue;
+        if (started.some((one) => one.run === before.run && one.start.at <= before.at && (one.end === undefined || one.end.at >= after.at))) flying += 1;
+        else idle += 1;
+      }
+    }
+    say(`D6 gaps of ${name} or more between a run's events`, `${flying + idle} (a dispatch in flight: ${flying}, none in flight: ${idle})`);
+  }
+  const backwards = [...runs.values()].flatMap((recorded) => recorded.slice(1).filter((event, at) => event.time < recorded[at].time)).length;
+  say('D6 events whose ts is before the event ahead of them in their run', backwards);
+  for (const system of ['forge', 'git']) {
+    const calls = events.filter((event) => is('L0', 'call.end')(event) && event.system === system);
+    say(`D7 call.end ${system}`, ['ok', 'failed', 'timed-out'].map((outcome) => `${outcome}: ${calls.filter((call) => call.outcome === outcome).length}`).join(', '));
+  }
+  const environment = events.filter((event) => event.class === 'environment');
+  say('D7 class environment events', `${environment.length} (${listed(tally(environment, (event) => event.event))})`);
+
+  [...row('D1'), ...row('D2')].sort((a, b) => a.start.at - b.start.at).forEach((one, at) => {
+    const lost = one.row === 'D1' ? `${lower(one)} to ${upper(one)} ms` : `${one.end.ms ?? 'unrecorded'} ms`;
+    const redo = one.claim?.redo;
+    const again = redo?.did.map(({ dispatch }) => dispatches.get(dispatch)).find((each) => kindOf(each) === one.kind && each.asked.role === one.asked.role);
+    const followed = redo === undefined ? 'redo no' : `redo yes, redo pulled ${redo.pull.time - last(one.run).time} ms after the run's last event, redo dispatch ${again?.end?.ms === undefined ? 'with no recorded ms' : `${again.end.ms} ms`}`;
+    out.push(`event ${at + 1}: ${one.row}, ${one.kind}, elapsed ${lost}, recorded.killed ${alive(one) ? 'yes' : 'no'}, ${followed}`);
+  });
+  out.push('lines by layer and event:');
+  for (const [name, found] of tally(events, (event) => `${event.layer} ${event.event}`)) out.push(`  ${name} ${found}`);
+  out.push('lines holding each field:');
+  for (const field of [...Object.keys(SHAPES), ...MARKS]) out.push(`  ${field} ${events.filter((event) => (MARKS.includes(field) ? event[field] : Object.hasOwn(event, field))).length}`);
+  return out;
+}
+
+const [directory, archive, passed, ...extra] = process.argv.slice(2);
+const lines = archive === '--lines';
+if (directory === undefined || extra.length > 0 || (lines ? passed !== undefined : (archive === undefined) !== (passed === undefined))) {
+  fail(2, 'usage: count.mjs <directory> [--lines | <archive> <digest>]');
+}
+const source = readLines(bytesOf(directory));
+if (source.totals.later > 0) {
+  process.stdout.write(`events later than the selector: ${source.totals.later}\n`);
+  process.exit(3);
+}
+const dropped = new Map();
+const kept = source.events.map((event) => filtered(event, dropped));
+const body = kept.map((event) => `${JSON.stringify(event)}\n`).join('');
+if (lines) {
+  process.stdout.write(body);
+} else {
+  const digest = sha(body);
+  const out = ['== reading',
+    `lines read: ${source.totals.read}`, `lines later than the selector: ${source.totals.later}`,
+    `lines unparsed: ${source.totals.unparsed}`, `lines kept: ${source.totals.kept}`,
+    `kept lines read past a torn fragment: ${source.totals.fragments}`,
+    `values dropped as outside their field's shape: ${[...dropped.values()].reduce((sum, found) => sum + found, 0)}${dropped.size === 0 ? '' : ` (${Object.keys(SHAPES).filter((field) => dropped.has(field)).map((field) => `${field}: ${dropped.get(field)}`).join(', ')})`}`,
+    `other entries named like a stream, not read: ${readdirSync(directory).filter((name) => name !== STREAM && (name.startsWith('events') || name.endsWith('.jsonl'))).length}`,
+    '== counts', ...count(kept), '== private', `private, sha256 of the filtered lines: ${digest}`];
+  let refusal;
+  if (archive !== undefined) {
+    const file = join(archive, STREAM);
+    const held = existsSync(archive) ? lstatSync(archive) : undefined;
+    if (digest !== passed) refusal = 'no extract: its digest is not the one passed';
+    else if (held === undefined || !held.isDirectory() || (held.mode & 0o077) !== 0) refusal = 'no extract: the archive is not an owner-only directory';
+    else {
+      try {
+        writeFileSync(file, body, { flag: 'wx', mode: 0o600 });
+        const back = readFileSync(file);
+        out.push(`extract lines: ${back.toString('utf8').split('\n').length - 1}`, `private, sha256 of the extract as read back: ${sha(back)}`);
+        if (sha(back) !== digest || (statSync(file).mode & 0o777) !== 0o600) refusal = 'the extract read back differs';
+      } catch (failure) {
+        refusal = `no extract: ${failure.code}`;
+      }
+    }
+  }
+  const after = readLines(bytesOf(directory));
+  out.push(`private, sha256 of the window's lines, before: ${source.window}`, `private, sha256 of the window's lines, after: ${after.window}`);
+  if (after.window !== source.window || after.totals.later > 0) refusal ??= `the source changed while the command ran, with ${after.totals.later} later`;
+  process.stdout.write(`${out.join('\n')}\n`);
+  if (refusal !== undefined) fail(4, refusal);
+}

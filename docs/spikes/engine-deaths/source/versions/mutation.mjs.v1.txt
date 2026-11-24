@@ -1,0 +1,58 @@
+// ABOUTME: Throwaway for #1462: reruns the published tests over count.mjs as it is, over each of mutants.sh's
+// edits of it, and over it restored, keeping every child's whole output and printing each one's evidence.
+
+// Usage: SPIKE_MUTATION=<new private directory> node mutation.mjs
+// Each child's whole standard output and error goes to <directory>/<NN>.txt, with the edit's diff before it.
+import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const here = dirname(fileURLToPath(import.meta.url));
+const kept = process.env.SPIKE_MUTATION;
+const source = readFileSync(join(here, 'count.mjs'));
+const tests = readFileSync(join(here, 'count.test.mjs.txt'));
+const sha = (bytes) => createHash('sha256').update(bytes).digest('hex');
+const edits = readFileSync(join(here, 'mutants.sh'), 'utf8').split("done <<'LIST'\n")[1].split('\nLIST')[0].split('\n')
+  .map((line) => { const at = line.indexOf('|'); return [line.slice(0, at), line.slice(at + 1)]; });
+
+/** One child: the text under test, run by the published tests, its whole output kept and read. */
+function child(n, name, text, diff) {
+  const at = mkdtempSync(join(tmpdir(), '1462-spike-engineer-mut-'));
+  writeFileSync(join(at, 'count.mjs'), text);
+  writeFileSync(join(at, 'count.test.mjs'), tests);
+  mkdirSync(join(at, 'tmp'));
+  const parses = spawnSync(process.execPath, ['--check', join(at, 'count.mjs')], { encoding: 'utf8' });
+  const ran = spawnSync(process.execPath, ['--test', '--test-reporter=tap', join(at, 'count.test.mjs')], { encoding: 'utf8', maxBuffer: 1e9, env: { ...process.env, TMPDIR: join(at, 'tmp') } });
+  const file = `${String(n).padStart(2, '0')}.txt`;
+  writeFileSync(join(kept, file), `# ${name}\n# edit diff\n${diff}\n# node --check exit ${parses.status}\n${parses.stderr}\n# node --test exit ${ran.status}\n# standard output\n${ran.stdout}\n# standard error\n${ran.stderr}`, { flag: 'wx', mode: 0o600 });
+  rmSync(at, { recursive: true });
+  const failing = [...ran.stdout.matchAll(/^not ok \d+ - (.*)\n((?: .*\n)*)/gm)].map(([, title, body]) => ({
+    title, code: /code: '?([A-Z_]+)/.exec(body)?.[1] ?? 'none', error: (/error: (?:\|-\n\s+)?(.*)/.exec(body)?.[1] ?? '').replace(/^'|'$/g, '').slice(0, 110),
+    place: /(count\.test\.mjs:\d+)/.exec(body.split('stack:')[1] ?? '')?.[1] ?? 'no place', expected: /expected: (.*)/.exec(body)?.[1]?.slice(0, 40), actual: /actual: (.*)/.exec(body)?.[1]?.slice(0, 40),
+  }));
+  const total = /^# tests (\d+)/m.exec(ran.stdout)?.[1];
+  const passed = /^# pass (\d+)/m.exec(ran.stdout)?.[1];
+  console.log(`${file} ${name}: parses ${parses.status === 0 ? 'yes' : 'NO'}, tests ${total}, pass ${passed}, fail ${failing.length}, of which assertion failures ${failing.filter(({ code }) => code === 'ERR_ASSERTION').length}`);
+  for (const line of diff.split('\n').filter((each) => /^[-+](?![-+])/.test(each))) console.log(`    ${line.slice(0, 1)} ${line.slice(1).trim()}`);
+  for (const each of failing) console.log(`    failing: ${each.title}\n      ${each.place}, ${each.code}: ${each.error}${each.expected === undefined ? '' : ` (expected ${each.expected}, actual ${each.actual})`}`);
+  return failing.length;
+}
+
+console.log(`node ${process.version}, count.mjs ${sha(source)}, tests ${sha(tests)}`);
+child(0, 'as it is', source, '');
+let survived = 0;
+edits.forEach(([name, edit], index) => {
+  const made = spawnSync('sed', ['-E', edit], { input: source, maxBuffer: 1e9 });
+  const at = mkdtempSync(join(tmpdir(), '1462-spike-engineer-dif-'));
+  writeFileSync(join(at, 'before'), source);
+  writeFileSync(join(at, 'after'), made.stdout);
+  const diff = spawnSync('diff', ['-U', '0', join(at, 'before'), join(at, 'after')], { encoding: 'utf8' }).stdout.split('\n').slice(2).join('\n');
+  rmSync(at, { recursive: true });
+  if (diff === '') console.log(`NO CHANGE ${name}`);
+  else if (child(index + 1, name, made.stdout, diff) === 0) { survived += 1; console.log(`    SURVIVED`); }
+});
+child(edits.length + 1, 'restored', readFileSync(join(here, 'count.mjs')), '');
+console.log(`edits: ${edits.length}, survived: ${survived}`);
