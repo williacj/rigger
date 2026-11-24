@@ -137,6 +137,7 @@ export async function dispatch({ id, card, directory, sink, provider, command, a
       timeout,
       host,
       readTimeout,
+      track: true,
       directory: place,
       scratch: held?.path,
       emitter: sink.emitter({ layer: 'L0', card, dispatch: id }),

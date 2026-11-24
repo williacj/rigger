@@ -26,10 +26,44 @@ import { temporaryDirectory } from './temporary-directory.mjs';
 import { EX_CAUSAL_CASES } from './process-proof-fixture.mjs';
 import { gone, tailIn } from './process-fixtures.mjs';
 import { BUDGET, assertAllEnded } from './exit-budget-world.mjs';
+import { descendantCommand, descendantsReady, holding, processState } from './process-fixtures.mjs';
 
 // A bound on the test alone, so that a caller which never ends fails here rather than holding the
 // suite: nothing waits on it once the caller has ended.
 const ENDS_WITHIN = { timeout: 30_000 };
+
+// Host reason: OS behaviour; caller SIGTERM must invoke containment and end a real escaped session.
+// Ordinary decision counterpart: test/exit-budget.test.mjs :: dispatch descendant decisions preserve identities, endings, isolation and the known escape
+// proves R-STATE-29
+test('T4: SIGTERM of a dispatch caller ends and records M6 outside its group and directory', ENDS_WITHIN, async (t) => {
+  const directory = holding(t);
+  const command = descendantCommand(directory);
+  const script = join(directory, 'tracker-caller.mjs');
+  writeFileSync(script, [
+    '// ABOUTME: Holds a real dispatch until its caller receives SIGTERM.',
+    `import { dispatch } from ${JSON.stringify(new URL('../src/execution/run.mjs', import.meta.url).href)};`,
+    `import { openSink } from ${JSON.stringify(new URL('../src/observation/sink.mjs', import.meta.url).href)};`,
+    `import { atExit } from ${JSON.stringify(new URL('../src/substrate/process.mjs', import.meta.url).href)};`,
+    "import { join } from 'node:path';",
+    'const [directory, command] = process.argv.slice(2);',
+    "const state = join(directory, 'state');",
+    "const sink = openSink({ directory: state, run: 'r-tracker', now: () => 0 });",
+    'atExit(sink.end);',
+    "dispatch({ id: 'd-tracker-exit', card: 1466, directory: state, sink, command, args: [], cwd: directory, workspace: directory, env: {}, timeout: 600000 }).catch(() => {});",
+  ].join('\n'));
+  const caller = spawn(process.execPath, [script, directory, command], { stdio: ['ignore', 'ignore', 'pipe'] });
+  t.after(() => caller.kill('SIGKILL'));
+  let stderr = '';
+  caller.stderr.on('data', (chunk) => { stderr += chunk; });
+  const exited = once(caller, 'exit');
+  const pids = await descendantsReady(t, directory);
+  caller.kill('SIGTERM');
+  assert.equal((await exited)[1], 'SIGTERM', stderr);
+  assert.ok(!alive(pids.M6) || processState(pids.M6).startsWith('Z'), 'M6 outlived the caller SIGTERM');
+  assert.deepEqual(readEvents(join(directory, 'state')).filter(({ pid }) => pid === pids.M6).map(({ event, dispatch, card, name, cmd }) => ({ event, dispatch, card, name, cmd })), [
+    { event: 'survivor.killed', dispatch: 'd-tracker-exit', card: 1466, name: 'tail', cmd: `/usr/bin/tail -f ${directory}/hold` },
+  ]);
+});
 
 const trace779 = (event, fields = {}) => {
   if (process.env.RIGGER_779_TRACE === '1') process.stderr.write(`${JSON.stringify({ at: Date.now(), event, ...fields })}\n`);
