@@ -2758,3 +2758,123 @@ distinct matched texts ['Token:', 'github_pat_', 'sk-ant-', 'token:']
 matches accounted for 234 unaccounted 0 []
 --- exit=0 end=2026-11-23T22:23:26.693Z
 
+=== entry 68 start=2026-11-24T00:25:23.117Z host=laptop
+$ cd ../.. && find docs/spikes/job-reach-after-supervisor-death docs/spikes/job-reach-after-supervisor-death.md docs/journal/2026-11-22-0316-1460-job-reach-after-supervisor-death.md -type f | wc -l; grep -rlIiE 'gh[pousr]_[A-Za-z0-9]{20,}|github_pat_|sk-ant-|sk-[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|xox[baprs]-|BEGIN [A-Z ]*PRIVATE KEY|bearer [A-Za-z0-9._-]{20,}|(password|passwd|secret|token|api[_-]?key)[[:space:]]*[:=]' docs/spikes/job-reach-after-supervisor-death docs/spikes/job-reach-after-supervisor-death.md docs/journal/2026-11-22-0316-1460-job-reach-after-supervisor-death.md; echo "grep exit $?"
+--- output
+      31
+docs/spikes/job-reach-after-supervisor-death/transcript.txt
+docs/spikes/job-reach-after-supervisor-death/win/w.cjs
+docs/spikes/job-reach-after-supervisor-death/session-log.txt
+docs/spikes/job-reach-after-supervisor-death/laptop/scan-account.py
+docs/spikes/job-reach-after-supervisor-death.md
+grep exit 0
+--- exit=0 end=2026-11-24T00:25:23.483Z
+
+=== entry 69 start=2026-11-24T00:25:23.582Z host=laptop
+$ cd ../.. && grep -rhoIiE 'gh[pousr]_[A-Za-z0-9]{20,}|github_pat_|sk-ant-|sk-[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|xox[baprs]-|BEGIN [A-Z ]*PRIVATE KEY|bearer [A-Za-z0-9._-]{20,}|(password|passwd|secret|token|api[_-]?key)[[:space:]]*[:=]' docs/spikes/job-reach-after-supervisor-death docs/spikes/job-reach-after-supervisor-death.md docs/journal/2026-11-22-0316-1460-job-reach-after-supervisor-death.md | sort | uniq -c; echo "grep exit ${PIPESTATUS[0]}"
+--- output
+  66 github_pat_
+  77 sk-ant-
+  55 token:
+  52 Token:
+grep exit 0
+--- exit=0 end=2026-11-24T00:25:24.248Z
+
+=== entry 70 start=2026-11-24T00:25:24.344Z host=laptop
+$ cd ../.. && grep -rhoIE 'github_pat_[A-Za-z0-9_]{20,}|sk-ant-[A-Za-z0-9_-]{20,}' docs/spikes/job-reach-after-supervisor-death docs/spikes/job-reach-after-supervisor-death.md docs/journal/2026-11-22-0316-1460-job-reach-after-supervisor-death.md | wc -l
+--- output
+       0
+--- exit=0 end=2026-11-24T00:25:24.483Z
+
+=== entry 71 start=2026-11-24T00:25:24.583Z host=laptop
+$ cd ../.. && grep -rhoIE '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[a-z]{2,}' docs/spikes/job-reach-after-supervisor-death docs/spikes/job-reach-after-supervisor-death.md docs/journal/2026-11-22-0316-1460-job-reach-after-supervisor-death.md | sort | uniq -c; echo "grep exit ${PIPESTATUS[0]}"
+--- output
+  16 noreply@anthropic.com
+ 135 user@1000.service
+grep exit 0
+--- exit=0 end=2026-11-24T00:25:24.739Z
+
+=== entry 72 start=2026-11-24T00:25:24.839Z host=laptop
+$ cd ../.. && python3 docs/spikes/job-reach-after-supervisor-death/laptop/scan-account.py docs/spikes/job-reach-after-supervisor-death docs/spikes/job-reach-after-supervisor-death.md docs/journal/2026-11-22-0316-1460-job-reach-after-supervisor-death.md
+--- output
+12 in job-reach-after-supervisor-death.md, counts a scan printed
+7 in job-reach-after-supervisor-death.md, the comment 'own token:' in w.cjs, or a copy of it
+6 in job-reach-after-supervisor-death.md, the scan pattern itself, in a command or script
+16 in scan-account.py, this script's own source
+4 in session-log.txt, a tool call's own description
+22 in session-log.txt, counts a scan printed
+12 in session-log.txt, prose about the scan
+4 in session-log.txt, the comment 'own token:' in w.cjs, or a copy of it
+14 in session-log.txt, the koffi binding OpenProcessToken, or a copy or mention of it
+42 in session-log.txt, the scan pattern itself, in a command or script
+43 in transcript.txt, counts a scan printed
+2 in transcript.txt, prose about the scan
+14 in transcript.txt, the comment 'own token:' in w.cjs, or a copy of it
+3 in transcript.txt, the koffi binding OpenProcessToken, or a copy or mention of it
+47 in transcript.txt, the scan pattern itself, in a command or script
+1 in w.cjs, the comment 'own token:' in w.cjs, or a copy of it
+1 in w.cjs, the koffi binding OpenProcessToken, or a copy or mention of it
+distinct matched texts ['Token:', 'github_pat_', 'sk-ant-', 'token:']
+matches accounted for 250 unaccounted 0 []
+--- exit=0 end=2026-11-24T00:25:25.183Z
+
+=== entry 73 start=2026-11-24T00:37:56.585Z host=laptop
+$ cd ../.. && find docs/spikes/job-reach-after-supervisor-death docs/spikes/job-reach-after-supervisor-death.md docs/journal/2026-11-22-0316-1460-job-reach-after-supervisor-death.md -type f | wc -l; grep -rlIiE 'gh[pousr]_[A-Za-z0-9]{20,}|github_pat_|sk-ant-|sk-[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|xox[baprs]-|BEGIN [A-Z ]*PRIVATE KEY|bearer [A-Za-z0-9._-]{20,}|(password|passwd|secret|token|api[_-]?key)[[:space:]]*[:=]' docs/spikes/job-reach-after-supervisor-death docs/spikes/job-reach-after-supervisor-death.md docs/journal/2026-11-22-0316-1460-job-reach-after-supervisor-death.md; echo "grep exit $?"
+--- output
+      32
+docs/spikes/job-reach-after-supervisor-death/transcript.txt
+docs/spikes/job-reach-after-supervisor-death/win/w.cjs
+docs/spikes/job-reach-after-supervisor-death/session-log.txt
+docs/spikes/job-reach-after-supervisor-death/laptop/scan-account.py
+docs/spikes/job-reach-after-supervisor-death.md
+grep exit 0
+--- exit=0 end=2026-11-24T00:37:56.945Z
+
+=== entry 74 start=2026-11-24T00:37:57.042Z host=laptop
+$ cd ../.. && grep -rhoIiE 'gh[pousr]_[A-Za-z0-9]{20,}|github_pat_|sk-ant-|sk-[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|xox[baprs]-|BEGIN [A-Z ]*PRIVATE KEY|bearer [A-Za-z0-9._-]{20,}|(password|passwd|secret|token|api[_-]?key)[[:space:]]*[:=]' docs/spikes/job-reach-after-supervisor-death docs/spikes/job-reach-after-supervisor-death.md docs/journal/2026-11-22-0316-1460-job-reach-after-supervisor-death.md | sort | uniq -c; echo "grep exit ${PIPESTATUS[0]}"
+--- output
+  70 github_pat_
+  81 sk-ant-
+  57 token:
+  53 Token:
+grep exit 0
+--- exit=0 end=2026-11-24T00:37:57.711Z
+
+=== entry 75 start=2026-11-24T00:37:57.810Z host=laptop
+$ cd ../.. && grep -rhoIE 'github_pat_[A-Za-z0-9_]{20,}|sk-ant-[A-Za-z0-9_-]{20,}' docs/spikes/job-reach-after-supervisor-death docs/spikes/job-reach-after-supervisor-death.md docs/journal/2026-11-22-0316-1460-job-reach-after-supervisor-death.md | wc -l
+--- output
+       0
+--- exit=0 end=2026-11-24T00:37:57.954Z
+
+=== entry 76 start=2026-11-24T00:37:58.051Z host=laptop
+$ cd ../.. && grep -rhoIE '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[a-z]{2,}' docs/spikes/job-reach-after-supervisor-death docs/spikes/job-reach-after-supervisor-death.md docs/journal/2026-11-22-0316-1460-job-reach-after-supervisor-death.md | sort | uniq -c; echo "grep exit ${PIPESTATUS[0]}"
+--- output
+  17 noreply@anthropic.com
+ 136 user@1000.service
+grep exit 0
+--- exit=0 end=2026-11-24T00:37:58.207Z
+
+=== entry 77 start=2026-11-24T00:37:58.305Z host=laptop
+$ cd ../.. && python3 docs/spikes/job-reach-after-supervisor-death/laptop/scan-account.py docs/spikes/job-reach-after-supervisor-death docs/spikes/job-reach-after-supervisor-death.md docs/journal/2026-11-22-0316-1460-job-reach-after-supervisor-death.md
+--- output
+8 in job-reach-after-supervisor-death.md, counts a scan printed
+4 in job-reach-after-supervisor-death.md, the comment 'own token:' in w.cjs, or a copy of it
+6 in job-reach-after-supervisor-death.md, the scan pattern itself, in a command or script
+16 in scan-account.py, this script's own source
+4 in session-log.txt, a tool call's own description
+22 in session-log.txt, counts a scan printed
+12 in session-log.txt, prose about the scan
+4 in session-log.txt, the comment 'own token:' in w.cjs, or a copy of it
+14 in session-log.txt, the koffi binding OpenProcessToken, or a copy or mention of it
+42 in session-log.txt, the scan pattern itself, in a command or script
+51 in transcript.txt, counts a scan printed
+2 in transcript.txt, prose about the scan
+18 in transcript.txt, the comment 'own token:' in w.cjs, or a copy of it
+3 in transcript.txt, the koffi binding OpenProcessToken, or a copy or mention of it
+53 in transcript.txt, the scan pattern itself, in a command or script
+1 in w.cjs, the comment 'own token:' in w.cjs, or a copy of it
+1 in w.cjs, the koffi binding OpenProcessToken, or a copy or mention of it
+distinct matched texts ['Token:', 'github_pat_', 'sk-ant-', 'token:']
+matches accounted for 261 unaccounted 0 []
+--- exit=0 end=2026-11-24T00:37:58.651Z
+

@@ -135,8 +135,11 @@ over SSH failed (`docs/spikes/whole-tree-containment.md`, "The user and elevatio
   judgment, from the premise of Windows' no-write-up integrity policy.
 - **A fresh process in another logon session.** Every process ran in one SSH connection's session.
   `Local\` names are per session, so R1's lookup by name from another session (after a reboot, or
-  from the interactive desktop) was not measured. A `Global\` name needs `SeCreateGlobalPrivilege`
-  to create.
+  from the interactive desktop) was not measured. A `Global\` job name was not measured either.
+  Two Microsoft pages, read on 2026-11-24 UTC, allow one
+  ([CreateJobObjectW](https://learn.microsoft.com/en-us/windows/win32/api/jobapi2/nf-jobapi2-createjobobjectw)),
+  and name `SeCreateGlobalPrivilege` only for creating file-mapping and symbolic-link objects
+  ([Kernel object namespaces](https://learn.microsoft.com/en-us/windows/win32/termserv/kernel-object-namespaces)).
 
 ## The routes weighed
 
@@ -743,8 +746,10 @@ own failed runs are still given in full.
 | 2 | the report quoted the first credential scan's file-and-line output, which the document check refuses; and the L7 test in `test/loop.test.mjs` timed out | `docs/spikes/job-reach-after-supervisor-death/laptop/commit-refusal-2.txt` |
 | 3 | the L7 test timed out again, at a load average of about 24 to 30. It passed 3 of 3 times alone, and in the next full run | `docs/spikes/job-reach-after-supervisor-death/laptop/commit-refusal-3.txt` |
 
-Since then, round 2's commit and the three commits of the rewritten branch each passed the suite at
-the first attempt. One command that held a commit was refused before anything ran, by the harness's
+Since then, the hook has refused one more attempt, an amend on 2026-11-24 UTC, and passed the others. The
+L7 test timed out again, 1 failure of 6040, and the load averages just after were 30.87, 65.48 and
+57.01. Its failure section is `docs/spikes/job-reach-after-supervisor-death/laptop/commit-refusal-4.txt`,
+with the whole log's checksum. One command that held a commit was refused before anything ran, by the harness's
 own hook: it also created and deleted a scratch branch, and deleting a branch is the owner's. The
 hook's whole output was `AGENTS.md reserves this to the owner: deleting a branch. Ask, rather than
 working around it.` The command was run again without that step.
@@ -913,8 +918,8 @@ next step. The members' and conhost.exe entries were all written before the supe
 
   The first six reported completion before entry 46's listing. The seventh was launched after it,
   and reported completion before entry 52's.
-- Three commits of the rewritten branch, the one that was pushed and the two it replaced, ran in the
-  background, and so did the follow-up commit this report is in. Each launching shell is recorded at its start, in
+- Each commit I made after the branch was rewritten ran in the background too. Each of their launching
+  shells is recorded at its start, in
   `docs/spikes/job-reach-after-supervisor-death/laptop/process-record-laptop.txt`, and the same pid
   then becomes suite-slot.sh through `exec`. The processes the hook starts under it are not recorded
   one by one, which is the same gap.
@@ -944,7 +949,7 @@ b3's record alone and was repeated as entry 44 against the whole record. The ful
 `docs/spikes/job-reach-after-supervisor-death/laptop/ps-after-last-run.txt`, quoted in full under
 "The laptop's final listing" at the end. Entries 29 and 46 were earlier listings. The record held no laptop entry then (entry 46's `grep -c` printed 0), so no
 laptop process could match one. That shows nothing about the unrecorded launches above. The laptop
-entry added since is the commit's own launcher, which started after that listing.
+entries added since are the launchers of later commits, which started after that listing.
 
 ### The credential scan
 

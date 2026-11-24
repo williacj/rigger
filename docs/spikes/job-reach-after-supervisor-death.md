@@ -135,8 +135,11 @@ over SSH failed (`docs/spikes/whole-tree-containment.md`, "The user and elevatio
   judgment, from the premise of Windows' no-write-up integrity policy.
 - **A fresh process in another logon session.** Every process ran in one SSH connection's session.
   `Local\` names are per session, so R1's lookup by name from another session (after a reboot, or
-  from the interactive desktop) was not measured. A `Global\` name needs `SeCreateGlobalPrivilege`
-  to create.
+  from the interactive desktop) was not measured. A `Global\` job name was not measured either.
+  Two Microsoft pages, read on 2026-11-24 UTC, allow one
+  ([CreateJobObjectW](https://learn.microsoft.com/en-us/windows/win32/api/jobapi2/nf-jobapi2-createjobobjectw)),
+  and name `SeCreateGlobalPrivilege` only for creating file-mapping and symbolic-link objects
+  ([Kernel object namespaces](https://learn.microsoft.com/en-us/windows/win32/termserv/kernel-object-namespaces)).
 
 ## The routes weighed
 
@@ -1136,8 +1139,10 @@ own failed runs are still given in full.
 | 2 | the report quoted the first credential scan's file-and-line output, which the document check refuses; and the L7 test in `test/loop.test.mjs` timed out | `docs/spikes/job-reach-after-supervisor-death/laptop/commit-refusal-2.txt` |
 | 3 | the L7 test timed out again, at a load average of about 24 to 30. It passed 3 of 3 times alone, and in the next full run | `docs/spikes/job-reach-after-supervisor-death/laptop/commit-refusal-3.txt` |
 
-Since then, round 2's commit and the three commits of the rewritten branch each passed the suite at
-the first attempt. One command that held a commit was refused before anything ran, by the harness's
+Since then, the hook has refused one more attempt, an amend on 2026-11-24 UTC, and passed the others. The
+L7 test timed out again, 1 failure of 6040, and the load averages just after were 30.87, 65.48 and
+57.01. Its failure section is `docs/spikes/job-reach-after-supervisor-death/laptop/commit-refusal-4.txt`,
+with the whole log's checksum. One command that held a commit was refused before anything ran, by the harness's
 own hook: it also created and deleted a scratch branch, and deleting a branch is the owner's. The
 hook's whole output was `AGENTS.md reserves this to the owner: deleting a branch. Ask, rather than
 working around it.` The command was run again without that step.
@@ -1156,15 +1161,15 @@ Why CI's policy step refused them is not established here.
 
 ### The transcript
 
-`docs/spikes/job-reach-after-supervisor-death/transcript.txt` holds 67 entries, from
-2026-11-22T02:57:37Z to 2026-11-23T22:23:26Z. That is every command the spike ran against the Windows machine, every
+`docs/spikes/job-reach-after-supervisor-death/transcript.txt` holds 77 entries, from
+2026-11-22T02:57:37Z to 2026-11-24T00:37:58Z. That is every command the spike ran against the Windows machine, every
 copy to it, the laptop listings, the clock readings and the credential scans. Every command quoted in this report is in
 it, character for character. It carries one header line and one kind of edit. The names of
 processes on the Windows machine, in the sweeps at entries 20, 22, 40 and 44 and in the ancestor
 chains of every run, and the Temp paths of other programs, at entries 24 and 42, are replaced by `[masked]`. Pids,
 creation times and every line the spike's own processes printed are unchanged. The edit was made
 by `docs/spikes/job-reach-after-supervisor-death/laptop/redact.py`. The unredacted file's sha256 is
-`b04e53ca71a0e5f88fb6b9119e576c167aaee3767e0fbb8d903472407686167d`. It holds no raw ESC byte. The Windows output keeps its CRLF line endings.
+`ae0d4cefa6c879b485ec54a40475f4de639395bc0fe5f8161224b9c06a8d5bc9`. It holds no raw ESC byte. The Windows output keeps its CRLF line endings.
 
 The quoted listings and calls in this report were filled in from the committed transcript by
 `docs/spikes/job-reach-after-supervisor-death/laptop/fill.py`, so each one is the transcript's own
@@ -1254,7 +1259,7 @@ off the repository.
 | Masked file | sha256 of the original | Distinct names masked |
 |---|---|---|
 | `docs/spikes/job-reach-after-supervisor-death.md` | `45115023c71df5dfb31329f463f9091f9aa18f4b9ba20870aad44b347098463c` | 3 |
-| `docs/spikes/job-reach-after-supervisor-death/transcript.txt` | `b04e53ca71a0e5f88fb6b9119e576c167aaee3767e0fbb8d903472407686167d` | 137 |
+| `docs/spikes/job-reach-after-supervisor-death/transcript.txt` | `ae0d4cefa6c879b485ec54a40475f4de639395bc0fe5f8161224b9c06a8d5bc9` | 137 |
 | `docs/spikes/job-reach-after-supervisor-death/session-log.txt` | `5bd7b9c76f045cc8a7c84b68b8de9e314e9aac4c0679a98b43d0966d0b82fcc1` | 41 |
 | `docs/spikes/job-reach-after-supervisor-death/laptop/gen-session-log.py` | withheld for privacy, kept off-repo | 9 |
 | `docs/spikes/job-reach-after-supervisor-death/laptop/report-template.txt` | `905e7a4907546f148f5ec58fb5db86a93d1ea002015b012033404b07cc2f266b` | 1 |
@@ -1337,8 +1342,8 @@ next step. The members' and conhost.exe entries were all written before the supe
 
   The first six reported completion before entry 46's listing. The seventh was launched after it,
   and reported completion before entry 52's.
-- Three commits of the rewritten branch, the one that was pushed and the two it replaced, ran in the
-  background, and so did the follow-up commit this report is in. Each launching shell is recorded at its start, in
+- Each commit I made after the branch was rewritten ran in the background too. Each of their launching
+  shells is recorded at its start, in
   `docs/spikes/job-reach-after-supervisor-death/laptop/process-record-laptop.txt`, and the same pid
   then becomes suite-slot.sh through `exec`. The processes the hook starts under it are not recorded
   one by one, which is the same gap.
@@ -1692,20 +1697,20 @@ PID     CREATED (UTC, microseconds)        NAME
 `docs/spikes/job-reach-after-supervisor-death/laptop/ps-after-last-run.txt`, quoted in full under
 "The laptop's final listing" at the end. Entries 29 and 46 were earlier listings. The record held no laptop entry then (entry 46's `grep -c` printed 0), so no
 laptop process could match one. That shows nothing about the unrecorded launches above. The laptop
-entry added since is the commit's own launcher, which started after that listing.
+entries added since are the launchers of later commits, which started after that listing.
 
 ### The credential scan
 
-The scan of record is transcript entries 61 to 64, 66 and 67. It covers the evidence directory, this report
-and the journal entry, as they stood just before the last fill. Entry 61 counts the files and lists
-those with a match:
+The scan of record is transcript entries 73 to 77. It covers the evidence directory, this report and
+the journal entry, as they stood just before the last fill. Entry 73 counts the files and lists those
+with a match:
 
 ```
 $ cd ../.. && find docs/spikes/job-reach-after-supervisor-death docs/spikes/job-reach-after-supervisor-death.md docs/journal/2026-11-22-0316-1460-job-reach-after-supervisor-death.md -type f | wc -l; grep -rlIiE 'gh[pousr]_[A-Za-z0-9]{20,}|github_pat_|sk-ant-|sk-[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|xox[baprs]-|BEGIN [A-Z ]*PRIVATE KEY|bearer [A-Za-z0-9._-]{20,}|(password|passwd|secret|token|api[_-]?key)[[:space:]]*[:=]' docs/spikes/job-reach-after-supervisor-death docs/spikes/job-reach-after-supervisor-death.md docs/journal/2026-11-22-0316-1460-job-reach-after-supervisor-death.md; echo "grep exit $?"
 ```
 
 ```
-      31
+      32
 docs/spikes/job-reach-after-supervisor-death/transcript.txt
 docs/spikes/job-reach-after-supervisor-death/win/w.cjs
 docs/spikes/job-reach-after-supervisor-death/session-log.txt
@@ -1714,21 +1719,21 @@ docs/spikes/job-reach-after-supervisor-death.md
 grep exit 0
 ```
 
-Entry 62 counts the matched text:
+Entry 74 counts the matched text:
 
 ```
 $ cd ../.. && grep -rhoIiE 'gh[pousr]_[A-Za-z0-9]{20,}|github_pat_|sk-ant-|sk-[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|xox[baprs]-|BEGIN [A-Z ]*PRIVATE KEY|bearer [A-Za-z0-9._-]{20,}|(password|passwd|secret|token|api[_-]?key)[[:space:]]*[:=]' docs/spikes/job-reach-after-supervisor-death docs/spikes/job-reach-after-supervisor-death.md docs/journal/2026-11-22-0316-1460-job-reach-after-supervisor-death.md | sort | uniq -c; echo "grep exit ${PIPESTATUS[0]}"
 ```
 
 ```
-  58 github_pat_
-  69 sk-ant-
-  32 token:
-  48 Token:
+  70 github_pat_
+  81 sk-ant-
+  57 token:
+  53 Token:
 grep exit 0
 ```
 
-Entry 63 shows that neither key fragment is ever followed by a key:
+Entry 75 shows that neither key fragment is ever followed by a key:
 
 ```
 $ cd ../.. && grep -rhoIE 'github_pat_[A-Za-z0-9_]{20,}|sk-ant-[A-Za-z0-9_-]{20,}' docs/spikes/job-reach-after-supervisor-death docs/spikes/job-reach-after-supervisor-death.md docs/journal/2026-11-22-0316-1460-job-reach-after-supervisor-death.md | wc -l
@@ -1738,39 +1743,8 @@ $ cd ../.. && grep -rhoIE 'github_pat_[A-Za-z0-9_]{20,}|sk-ant-[A-Za-z0-9_-]{20,
        0
 ```
 
-Entry 66 accounts for every match, by file and class, with
-`docs/spikes/job-reach-after-supervisor-death/laptop/scan-account.py`. Entry 65 was the same run
-before that script counted its own source as a class. It left three matches unaccounted, all in the
-script's own lines:
-
-```
-$ cd ../.. && python3 docs/spikes/job-reach-after-supervisor-death/laptop/scan-account.py docs/spikes/job-reach-after-supervisor-death docs/spikes/job-reach-after-supervisor-death.md docs/journal/2026-11-22-0316-1460-job-reach-after-supervisor-death.md
-```
-
-```
-7 in job-reach-after-supervisor-death.md, counts a scan printed
-2 in job-reach-after-supervisor-death.md, prose about the scan
-6 in job-reach-after-supervisor-death.md, the scan pattern itself, in a command or script
-16 in scan-account.py, this script's own source
-4 in session-log.txt, a tool call's own description
-22 in session-log.txt, counts a scan printed
-12 in session-log.txt, prose about the scan
-4 in session-log.txt, the comment 'own token:' in w.cjs, or a copy of it
-14 in session-log.txt, the koffi binding OpenProcessToken, or a copy or mention of it
-42 in session-log.txt, the scan pattern itself, in a command or script
-27 in transcript.txt, counts a scan printed
-2 in transcript.txt, prose about the scan
-3 in transcript.txt, the comment 'own token:' in w.cjs, or a copy of it
-3 in transcript.txt, the koffi binding OpenProcessToken, or a copy or mention of it
-41 in transcript.txt, the scan pattern itself, in a command or script
-1 in w.cjs, the comment 'own token:' in w.cjs, or a copy of it
-1 in w.cjs, the koffi binding OpenProcessToken, or a copy or mention of it
-distinct matched texts ['Token:', 'github_pat_', 'sk-ant-', 'token:']
-matches accounted for 207 unaccounted 0 []
-```
-
-Entry 66's total, 207, equals the sum of entry 62's four counts. Entry 67 repeated it after this report
-was refilled, with a class added for the line the script itself prints:
+Entry 77 accounts for every match, by file and class, with
+`docs/spikes/job-reach-after-supervisor-death/laptop/scan-account.py`:
 
 ```
 $ cd ../.. && python3 docs/spikes/job-reach-after-supervisor-death/laptop/scan-account.py docs/spikes/job-reach-after-supervisor-death docs/spikes/job-reach-after-supervisor-death.md docs/journal/2026-11-22-0316-1460-job-reach-after-supervisor-death.md
@@ -1778,7 +1752,7 @@ $ cd ../.. && python3 docs/spikes/job-reach-after-supervisor-death/laptop/scan-a
 
 ```
 8 in job-reach-after-supervisor-death.md, counts a scan printed
-3 in job-reach-after-supervisor-death.md, the comment 'own token:' in w.cjs, or a copy of it
+4 in job-reach-after-supervisor-death.md, the comment 'own token:' in w.cjs, or a copy of it
 6 in job-reach-after-supervisor-death.md, the scan pattern itself, in a command or script
 16 in scan-account.py, this script's own source
 4 in session-log.txt, a tool call's own description
@@ -1787,34 +1761,36 @@ $ cd ../.. && python3 docs/spikes/job-reach-after-supervisor-death/laptop/scan-a
 4 in session-log.txt, the comment 'own token:' in w.cjs, or a copy of it
 14 in session-log.txt, the koffi binding OpenProcessToken, or a copy or mention of it
 42 in session-log.txt, the scan pattern itself, in a command or script
-39 in transcript.txt, counts a scan printed
+51 in transcript.txt, counts a scan printed
 2 in transcript.txt, prose about the scan
-10 in transcript.txt, the comment 'own token:' in w.cjs, or a copy of it
+18 in transcript.txt, the comment 'own token:' in w.cjs, or a copy of it
 3 in transcript.txt, the koffi binding OpenProcessToken, or a copy or mention of it
-47 in transcript.txt, the scan pattern itself, in a command or script
+53 in transcript.txt, the scan pattern itself, in a command or script
 1 in w.cjs, the comment 'own token:' in w.cjs, or a copy of it
 1 in w.cjs, the koffi binding OpenProcessToken, or a copy or mention of it
 distinct matched texts ['Token:', 'github_pat_', 'sk-ant-', 'token:']
-matches accounted for 234 unaccounted 0 []
+matches accounted for 261 unaccounted 0 []
 ```
 
-None of the matches is a credential. Entry 64 looked for email addresses:
+Its total, 261, equals the sum of entry 74's four counts. None of the matches is a credential. Entry 76
+looked for email addresses:
 
 ```
 $ cd ../.. && grep -rhoIE '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[a-z]{2,}' docs/spikes/job-reach-after-supervisor-death docs/spikes/job-reach-after-supervisor-death.md docs/journal/2026-11-22-0316-1460-job-reach-after-supervisor-death.md | sort | uniq -c; echo "grep exit ${PIPESTATUS[0]}"
 ```
 
 ```
-  15 noreply@anthropic.com
- 134 user@1000.service
+  17 noreply@anthropic.com
+ 136 user@1000.service
 grep exit 0
 ```
 
 The first is the commit trailer's address, and the second a systemd unit name from #1430's report, as
-my session read it. Earlier scans are entries 30 to 35, 48 to 51 and 53 to 60. After entry 67, the
-transcript was copied again to add it, this report and its template were refilled, and
-the follow-up commit's own process record was added. Each of those adds copies of the matches above
-in these same classes.
+my session read it. Earlier scans are entries 30 to 35, 48 to 51 and 53 to 72. Entry 65 left three
+matches unaccounted, all in the accounting script's own lines. Entry 66 counted those as a class, and
+entry 67 added a class for the line the script itself prints. After entry 77, the transcript was
+copied again to add entries 73 to 77, this report was refilled, and the commit's launcher was added
+to the process record. Those add only copies of the matches above, in the same classes.
 
 ### Files written outside the spike's own directories
 
