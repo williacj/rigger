@@ -145,7 +145,10 @@ process left in its group or working in its directory, unless Rigger itself is k
 Where Rigger's own exit runs past a fixed time, it ends each remaining group without searching that group's directories, and its next start ends what remains in them. Until that start, such a process keeps running.
 Otherwise, Rigger ends a process of yours working in a running dispatch's directory, such as a shell, when
 that dispatch ends. A process that leaves its group and works elsewhere is outside that
-containment. Rigger cannot make an agent more restricted than the account it runs under.
+containment. While Rigger holds a sign that a dispatch's process may have outlived the dispatch,
+it starts no further dispatch for your repository and names the sign;
+`docs/spec/requirements.md` says what counts as a sign. Rigger cannot make an agent more
+restricted than the account it runs under.
 An agent running as you can still post a verdict in your name with `gh`, or confirm one with
 `rigger verdict` at a terminal it opens itself, and the gate cannot tell either from yours.
 
@@ -215,7 +218,7 @@ the ordinary test suite; engine installation and supported engine hosts are sepa
 npx @williacj/rigger init          # write a starter config, fork the role templates
 npx @williacj/rigger doctor        # check Node, gh version, gh auth, agent CLI auth, config, board reachability, board columns, board priority field, board sharing, gate check required, admission, launchd job
 npx @williacj/rigger setup-board   # create the board columns, fields, and labels
-npx @williacj/rigger plan          # show what the next run would pull, and what it refuses
+npx @williacj/rigger plan          # show what the next run would pull, and what it refuses, though no sign that would stop that run
 npx @williacj/rigger once          # pull and finish one card, then exit
 npx @williacj/rigger run           # run until the board drains, or, while a clock trigger is declared, until stopped
 npx @williacj/rigger pause         # stop admitting new cards; in-flight cards finish
