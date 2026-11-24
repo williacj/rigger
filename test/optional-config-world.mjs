@@ -77,7 +77,7 @@ export function optionalWorld(t, key, {
     ...realHost, ps: '/controlled/ps', lsof: '/controlled/lsof',
     clock: { ...clock, pause: async () => {} },
     signal: gone,
-    spawnSync: () => ({ status: 0, stdout: 'Thu Oct 29 12:00:00 2026\n', stderr: '' }),
+    spawnSync: (_tool, args) => args.includes('-A') ? { status: 1, stdout: '', stderr: '' } : ({ status: 0, stdout: 'Thu Oct 29 12:00:00 2026\n', stderr: '' }),
     execFile: (_command, _args, _options, done) => {
       queueMicrotask(() => done(Object.assign(new Error('no process listed'), { code: 1 }), '', ''));
       return { stdout: { destroy() {} }, stderr: { destroy() {} } };
