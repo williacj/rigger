@@ -184,13 +184,14 @@ test('S3: a later start retries an unended process and refuses work while it rem
   assert.equal(world.events().filter(({ event }) => event === 'sign.stopped').length, 1);
 });
 
-// Each role has a different L2 continuation; none may spend a refusal as another attempt.
+// Each control establishes the next role that the corresponding sign must prevent.
 // proves R-STATE-30, R-STATE-39
  test('R1-R4 and R9: a provisioner maker judge or escalation predecessor sign prevents its next role', { timeout: 20_000 }, async (t) => {
   const { signLoopWorld, until } = await import('./process-fixtures.mjs');
   const { minimalConfig } = await import('./optional-config.mjs');
   const { card } = await import('./verb-consumer.mjs');
-  for (const role of ['provisioner', 'maker', 'judge', 'escalation predecessor']) await t.test(role, async (t) => {
+  const { markerComment } = await import('./fake-repository.mjs');
+  for (const role of ['provisioner', 'maker', 'judge', 'escalation predecessor']) for (const signed of [false, true]) await t.test(`${role} ${signed ? 'sign' : 'control'}`, async (t) => {
     const settings = minimalConfig();
     if (role === 'provisioner') {
       settings.provisioning = { install: { run: 'controlled install', required: true, timeout: 60_000 } };
@@ -201,19 +202,36 @@ test('S3: a later start retries an unended process and refuses work while it rem
       settings.escalate = { ambiguous: 'manager' };
     }
     const world = await signLoopWorld(t, { settings, numbers: role === 'judge' ? [card(10, 'Review')] : [10] });
-    if (role === 'judge') world.open(10);
+    if (role === 'judge') {
+      world.open(10);
+      const owner = markerComment({ card: 10, pull: 1010, head: world.tip, body: card(10, 'Review').body, role: 'owner' });
+      world.repository.comment(1010, owner.body, owner.createdAt);
+    }
     const running = world.start();
     await until(() => world.models.length === 1 || world.completed(), t);
     assert.equal(world.models.length, 1, JSON.stringify(world.events()));
     await turn(t);
     const model = world.models[0];
-    world.table.get(model.escaped).refuses = true;
+    if (signed) world.table.get(model.escaped).refuses = true;
     if (role === 'maker') world.open(10);
-    model.finish(role === 'provisioner' || role === 'judge' ? 3 : 0);
-    await until(() => world.events().some(({ event }) => event === 'dispatch.end'), t);
-    assert.equal(world.events().filter(({ event }) => event === 'dispatch').length, 1, 'a continuation was selected beside the sign');
-    await running.catch(() => {});
+    if (role === 'judge') {
+      const veto = markerComment({ card: 10, pull: 1010, head: world.tip, body: card(10, 'Review').body, verdict: 'needs revision', items: ['unmet'], toSound: 'Make the accepted change.' });
+      world.repository.comment(1010, veto.body, veto.createdAt);
+    }
+    if (role === 'escalation predecessor') await world.repository.postIssueComment(10, ['```rigger-escalation', 'category: ambiguous', 'item: 1', 'reason: A controlled decision is missing.', `dispatch: ${model.dispatch.dispatch}`, '```'].join('\n'));
+    model.finish(role === 'provisioner' ? 3 : 0);
+    await until(() => world.completed() || world.models.length > 1, t);
+    if (!signed) {
+      assert.equal(world.models.length, 2, `${role}'s control did not select its continuation: ${JSON.stringify(world.events())}`);
+      const expected = { provisioner: 'install', maker: 'reviewer', judge: 'engineer', 'escalation predecessor': 'manager' }[role];
+      assert.equal(world.models[1].dispatch.role ?? world.models[1].dispatch.step, expected);
+      world.models[1].finish(3);
+      await running.catch(() => {});
+      return;
+    }
     assert.equal(world.models.length, 1, 'a continuation command started beside the sign');
+    await running.catch(() => {});
+    assert.equal(world.events().filter(({ event }) => event === 'dispatch').length, 1, 'a continuation was selected beside the sign');
     assert.equal(world.events().filter(({ event, attempt }) => event === 'attempt.failed' && attempt === 2).length, 0, 'a sign spent attempt 2');
     assert.equal(world.events().filter(({ event }) => event === 'sign.stopped').length, 1);
   });
@@ -601,7 +619,7 @@ test('S3: a later start retries an unended process and refuses work while it rem
   await running;
   let entries;
   assert.doesNotThrow(() => { entries = readGroups(world.directory); }, 'the tracked-set read was recorded as a directory with no path');
-  assert.ok(entries[0].unread.some(({ kind, reason }) => kind === 'dispatch' && /tracked identity read failed/.test(reason)));
+  assert.ok(entries[0]?.unread?.some(({ kind, reason }) => kind === 'dispatch' && /tracked identity read failed/.test(reason)));
 });
 
 /** The real plan verb reads this loop's admission and a snapshot served by the existing fake gh. */
@@ -671,8 +689,10 @@ async function planAfter(world) {
   const before = world.events().length;
   const notes = world.repository.held().issues.flatMap(({ comments = [] }) => comments).length;
   armed = true;
-  await world.start().catch(() => {});
+  const second = world.start();
+  await until(() => world.completed() || world.models.length > 1, t);
   assert.equal(world.models.length, 1, 'the second judge command started');
+  await second.catch(() => {});
   const after = world.events().slice(before);
   for (const name of ['judge.failed', 'review.escalate', 'attempt.failed']) assert.equal(after.some(({ event }) => event === name), false, `the unstarted judge recorded ${name}`);
   assert.equal(world.repository.held().issues.flatMap(({ comments = [] }) => comments).length, notes, 'the unstarted judge escalated on the forge');
@@ -720,11 +740,11 @@ async function planAfter(world) {
       return child;
     };
     const running = world.start();
-    await until(() => world.events().some((event) => event.event === 'dispatch.end' && world.events().some((start) => start.event === 'dispatch' && start.dispatch === event.dispatch && start.card === 10 && start.attempt === 2)) || world.completed(), t);
+    await until(() => world.events().some((event) => event.event === 'dispatch.end' && world.events().some((start) => start.event === 'dispatch' && start.dispatch === event.dispatch && start.card === 10 && start.attempt === 2)) || world.completed() || world.models.some(({ dispatch }) => dispatch.card === 10), t);
+    assert.equal(world.models.some(({ dispatch }) => dispatch.card === 10), false, 'the refused second attempt started its command');
     for (const model of world.models) { model.host.spawn().stdout.write('controlled work\n'); model.finish(7); }
     await running.catch(() => {});
     assert.equal(typeof signAt, 'number', 'the mid-run sign was not established');
-    assert.equal(world.models.some(({ dispatch }) => dispatch.card === 10), false, 'the refused second attempt started its command');
     const start = world.events().find((event) => event.event === 'dispatch' && event.card === 10 && event.attempt === 2);
     assert.ok(world.events().findIndex((event) => event.event === 'dispatch.start' && event.dispatch === start.dispatch) > signAt, 'the claimed dispatch start was not recorded after the sign');
     assert.equal(world.events().filter(({ event, card, attempt }) => event === 'attempt.failed' && card === 10 && attempt === 1).length, 1);
@@ -774,7 +794,7 @@ test('R12: claimed board moves, escalation notes and merges reach the forge afte
     release();
     await running.catch(() => {});
     if (action === 'move') assert.equal((await world.fake.operations.readItems()).find(({ number }) => number === 11).column, 'Done', 'the board never received the move');
-    if (action === 'escalate') assert.ok(world.repository.held().issues.find(({ number }) => number === 11).comments.some(({ body }) => /Rigger escalates/.test(body)), 'the forge never received the escalation note');
+    if (action === 'escalate') assert.ok(world.repository.held().issues.find(({ number }) => number === 11).comments?.some(({ body }) => /Rigger escalates/.test(body)) ?? false, 'the forge never received the escalation note');
     if (action === 'merge') assert.deepEqual(world.repository.merges(), [{ number: 1011, head: world.tip }], 'the forge never received the merge');
     assert.equal(world.models.length, 1, 'a later command started');
     assert.equal(world.events().filter(({ event }) => event === 'sign.stopped').length, 1);
@@ -870,7 +890,7 @@ test('S10-S11: a successful empty census or a replaced group or directory admits
     if (observation === 'group replaced') { const row = world.table.get(world.group); row.state = 'S'; row.started = 'Thu Oct 29 12:00:01 2026'; }
     if (observation === 'directory gone') rmSync(place, { recursive: true });
     if (observation === 'directory replaced') world.host.stat = () => ({ dev: BigInt(identity.device), ino: BigInt(identity.inode) + 1n });
-    await killRecordedGroups({ directory: world.directory, sink: world.sink, host: world.host });
+    await assert.doesNotReject(killRecordedGroups({ directory: world.directory, sink: world.sink, host: world.host }), 'a successful empty or replaced scope read did not clear its sign');
     assert.deepEqual(world.signals, [], 'a gone or replaced scope was signalled');
     assert.deepEqual(readGroups(world.directory), [], 'a shown-gone read sign remained');
     const next = trackerWorld(world.clock, world.group + 100, world.table);
@@ -1019,9 +1039,10 @@ test('S1 S2 S9 S14a S22 verb: an ending dispatch or failed write stops actual ru
       assert.equal(world.verbEnded(), false, 'the run did not wait for its running dispatch');
     } else world.table.get(first.escaped).refuses = true;
     first.finish(3);
+    await until(() => world.verbEnded() || world.models.length > (row === 'S14a' ? 2 : 1), t);
+    assert.equal(world.models.length, row === 'S14a' ? 2 : 1, 'a later dispatch command started');
     const result = await running;
     assert.equal(result.code, 1, result.text);
-    assert.equal(world.models.length, row === 'S14a' ? 2 : 1, 'a later dispatch command started');
     assert.equal(world.events().filter(({ event }) => event === 'pull').length, row === 'S14a' ? 2 : 1, 'another card was claimed');
     const stops = world.events().filter(({ event }) => event === 'sign.stopped');
     if (row === 'S22') {
