@@ -237,7 +237,7 @@ async function scheduledMaker(t, { missingGit = false, routed = false, continuin
       }
       return recordedChild(sessions, command, args, options);
     },
-    spawnSync: () => ({ status: 0, stdout: 'Thu Nov  5 12:00:00 2026\n', stderr: '' }),
+    spawnSync: (_tool, args) => args.includes('-A') ? { status: 1, stdout: '', stderr: '' } : ({ status: 0, stdout: 'Thu Nov  5 12:00:00 2026\n', stderr: '' }),
   };
   const workspaceHeads = [];
   const built = loop({ config, board: handleOn(board, { columns: config.board.columns }), decide,
@@ -544,7 +544,7 @@ async function scheduledJudge(t, { step = false } = {}) {
     assert.equal(command, 'codex');
     invocations.push(args);
     return recordedChild(sessions, command, args, options);
-  }, spawnSync: () => ({ status: 0, stdout: 'Thu Nov  5 12:00:00 2026\n', stderr: '' }) };
+  }, spawnSync: (_tool, args) => args.includes('-A') ? { status: 1, stdout: '', stderr: '' } : ({ status: 0, stdout: 'Thu Nov  5 12:00:00 2026\n', stderr: '' }) };
   const built = loop({ config, board: handleOn(board, { columns: config.board.columns }), decide,
     facts: factsCall({ config, reads: repository.operations, decide }), l2, sink: request.sink, kill: async () => {},
     workspace: async () => { throw new Error('a judge makes no worktree'); }, workspaceTip: async () => head,
