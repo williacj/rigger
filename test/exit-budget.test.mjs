@@ -4,6 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { realpathSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { readGroups } from '../src/execution/groups.mjs';
@@ -194,4 +195,162 @@ test('dispatch descendant decisions preserve identities, endings, isolation and 
       await turn(t);
     });
   }
+});
+
+/** The start `trackerWorld` gives every row, `Thu Oct 29 12:00:00 2026` in UTC, in seconds. */
+const WORLD_STARTED = Date.UTC(2026, 9, 29, 12, 0, 0) / 1000;
+
+/**
+ * A later start over one entry a dead engine left for `world`'s group, recording `world.escaped` as
+ * tracked unless `entry` says otherwise: what it signalled and what it recorded.
+ */
+async function restartedOver(t, world, entry = {}) {
+  const state = temporaryDirectory('rigger-tracked-restart-', { context: t });
+  const { writeGroups } = await import('../src/execution/groups.mjs');
+  writeGroups(state, [{ group: world.group, started: WORLD_STARTED, dispatch: 'd-dead', card: 1467, tracked: [{ pid: world.escaped, started: WORLD_STARTED }], ...entry }]);
+  const sink = heldSink();
+  const failure = await killRecordedGroups({ directory: state, sink, host: world.host }).then(() => undefined, (error) => error);
+  return { failure, state, events: sink.events, signalled: (pid) => world.signals.filter(({ target }) => target === pid).map(({ name }) => name) };
+}
+
+// Native R3 to R8 keep the OS proof; these table answers isolate what a later start decides.
+test('a later start ends a recorded tracked process it confirms, leaves one it cannot, and refuses a malformed tracked set', async (t) => {
+  await t.test('R3: a confirmed group and a confirmed tracked process are both ended and recorded', async (t) => {
+    const world = trackerWorld(manualClock(0));
+    const ran = await restartedOver(t, world);
+    assert.equal(ran.failure, undefined);
+    assert.deepEqual(ran.signalled(world.escaped), ['SIGSTOP', 'SIGKILL'], 'the tracked process was not stopped and killed');
+    assert.deepEqual(ran.events.filter(({ pid }) => pid === world.escaped).map(({ layer, dispatch, card, event, name, cmd }) => ({ layer, dispatch, card, event, name, cmd })), [
+      { layer: 'L0', dispatch: 'd-dead', card: 1467, event: 'recorded.killed', name: 'controlled', cmd: `controlled ${world.escaped}` },
+    ]);
+  });
+  await t.test('R4: a tracked process is ended and recorded though its recorded group is not confirmed', async (t) => {
+    const world = trackerWorld(manualClock(0));
+    const ran = await restartedOver(t, world, { started: WORLD_STARTED - 1 });
+    assert.equal(ran.failure, undefined);
+    assert.deepEqual(ran.signalled(-world.group), [], 'the unconfirmed group was killed');
+    assert.equal(world.table.get(world.group).state, 'S', 'the unconfirmed group\'s leader was ended');
+    assert.deepEqual(ran.signalled(world.escaped), ['SIGSTOP', 'SIGKILL'], 'the tracked process was not stopped and killed');
+    assert.deepEqual(ran.events.filter(({ pid }) => pid === world.escaped).map(({ dispatch, event }) => [dispatch, event]), [['d-dead', 'recorded.killed']]);
+  });
+  // ps(1) prints `lstart` as C's `%c`; a row whose column is not that form is a start time L0 cannot read.
+  for (const [row, change] of [
+    ['R5: a recorded tracked pid whose process started a second later', (world) => { world.table.get(world.escaped).started = 'Thu Oct 29 12:00:01 2026'; }],
+    ['R12: a listed recorded tracked pid whose start-time read cannot be read', (world) => world.inject((_tool, args) => (args.at(-1) === 'pid=,lstart=' ? { status: 0, stdout: `${world.escaped} not a start time\n`, stderr: '' } : undefined))],
+    ['a recorded tracked pid whose start-time read fails', (world) => world.inject((_tool, args) => (args.at(-1) === 'pid=,lstart=' ? { error: Object.assign(new Error('ps refused'), { code: 2 }), stdout: '', stderr: 'ps refused' } : undefined))],
+  ]) {
+    await t.test(`${row} is left alive and not stopped, and recorded as not ended`, async (t) => {
+      const world = trackerWorld(manualClock(0));
+      change(world);
+      const ran = await restartedOver(t, world);
+      assert.equal(ran.failure, undefined, ran.failure?.message);
+      assert.deepEqual(ran.signalled(world.escaped), [], 'the process at the recorded pid was signalled');
+      assert.equal(world.table.get(world.escaped).state, 'S');
+      const named = ran.events.filter(({ pid }) => pid === world.escaped);
+      assert.deepEqual(named.map(({ layer, dispatch, card, event }) => ({ layer, dispatch, card, event })), [{ layer: 'L0', dispatch: 'd-dead', card: 1467, event: 'recorded.unended' }]);
+      assert.match(named[0].reason, /start time/);
+    });
+  }
+  await t.test('R11: a recorded tracked pid no read lists is sent no signal and named by no event', async (t) => {
+    const world = trackerWorld(manualClock(0));
+    world.table.delete(world.escaped);
+    const ran = await restartedOver(t, world);
+    assert.equal(ran.failure, undefined);
+    assert.ok(world.reads.some(({ args }) => args.at(-1) === 'pid=,lstart=' && args.includes(String(world.escaped))), 'the start never read the recorded pid, so this proves nothing');
+    assert.deepEqual(ran.signalled(world.escaped), []);
+    assert.deepEqual(ran.events.filter(({ pid }) => pid === world.escaped), []);
+  });
+  await t.test('R7: an entry with no tracked-set field has its group ended as before, and no tracked read', async (t) => {
+    const world = trackerWorld(manualClock(0));
+    const ran = await restartedOver(t, world, { tracked: undefined });
+    assert.equal(ran.failure, undefined);
+    assert.ok(ran.signalled(-world.group).includes('SIGKILL'), 'the confirmed group was not killed');
+    assert.deepEqual(readGroups(ran.state), [], 'the entry outlived its kill');
+    assert.deepEqual(world.reads.filter(({ args }) => args.at(-1) === 'pid=,lstart='), [], 'a tracked process was read for an entry that records none');
+    assert.deepEqual(ran.signalled(world.escaped), []);
+  });
+  for (const [what, tracked] of [
+    ['no start time', [{ pid: 900_000_020 }]],
+    ...[0, -1, 1, 2.5, '900000020'].map((pid) => [`the pid ${JSON.stringify(pid)}`, [{ pid, started: WORLD_STARTED }]]),
+  ]) {
+    await t.test(`R8: a record whose tracked process has ${what} is refused, naming the record, and ends nothing`, async (t) => {
+      const world = trackerWorld(manualClock(0));
+      const ran = await restartedOver(t, world, { tracked });
+      assert.ok(ran.failure?.message.includes(join(ran.state, 'groups.json')), `the start did not name the record: ${ran.failure?.message}`);
+      assert.deepEqual(world.signals, [], 'the start signalled a process');
+    });
+  }
+});
+
+/** A dispatch through L1's function over `world`, with its record in a state directory of its own. */
+function trackedThroughL1(t, world, clock) {
+  const state = temporaryDirectory('rigger-tracked-record-', { context: t });
+  const sink = heldSink();
+  const running = dispatch({ id: 'd-tracked', card: 1467, directory: state, sink,
+    command: '/controlled/command', args: [], cwd: '/', env: {}, timeout: 600_000, host: world.host, clock: clock.now });
+  running.catch(() => {});
+  t.after(async () => { world.inject(() => undefined); world.finish(); await running.catch(() => {}); });
+  return { state, sink, running, tracked: () => readGroups(state).find(({ dispatch: id }) => id === 'd-tracked')?.tracked };
+}
+
+// Native R1, R2 and R6 keep the OS proof; these table answers isolate what L0 hands L1 and what L1 keeps.
+test('a dispatch\'s entry names each process the tracker adds, keeps it whatever later reads show, and its exit ends one whose rewrite failed', async (t) => {
+  await t.test('R13: a tracked process that ends while its dispatch runs is still named by pid and start time', async (t) => {
+    const clock = manualClock(0);
+    const world = trackerWorld(clock);
+    const ran = trackedThroughL1(t, world, clock);
+    await turn(t);
+    assert.deepEqual(ran.tracked(), [{ pid: world.escaped, started: WORLD_STARTED }], 'the first read\'s tracked process is not in the entry');
+    // The tracked process ends, and the next read shows a later descendant in its place.
+    const later = world.escaped + 100;
+    world.table.set(later, { ...world.table.get(world.escaped), pid: later, group: later, started: 'Thu Oct 29 12:00:01 2026', cmd: `controlled ${later}` });
+    world.table.delete(world.escaped);
+    await clock.advance(1000);
+    await turn(t);
+    assert.ok(world.reads.filter(({ args }) => args.includes('-A')).length >= 2, 'no tracker read followed the process\'s end, so this proves nothing');
+    assert.deepEqual(ran.tracked(), [{ pid: world.escaped, started: WORLD_STARTED }, { pid: later, started: WORLD_STARTED + 1 }], 'the entry was pruned');
+  });
+  await t.test('R9: an entry keeps a tracked process through failed reads after its parent exits, and the next start ends it', async (t) => {
+    const clock = manualClock(0);
+    const world = trackerWorld(clock);
+    const ran = trackedThroughL1(t, world, clock);
+    await turn(t);
+    assert.deepEqual(ran.tracked(), [{ pid: world.escaped, started: WORLD_STARTED }], 'the first read\'s tracked process is not in the entry');
+    world.table.get(world.escaped).parent = 1;
+    world.inject((_tool, args) => (args.includes('-A') ? { error: Object.assign(new Error('ps refused'), { code: 2 }), stdout: '', stderr: 'ps refused' } : undefined));
+    for (const at of [1000, 2000, 3000]) {
+      await clock.advance(at);
+      await turn(t);
+    }
+    assert.ok(world.reads.filter(({ args }) => args.includes('-A')).length >= 4, 'no tracker read failed, so this proves nothing');
+    const [entry] = readGroups(ran.state);
+    assert.deepEqual(entry.tracked, [{ pid: world.escaped, started: WORLD_STARTED }], 'failed reads lost the tracked process');
+    // The engine is killed outright here: the next start reads this entry over the same table, whose read confirms the start.
+    const next = trackerWorld(manualClock(0), world.group, new Map([...world.table].map(([pid, row]) => [pid, { ...row }])));
+    const restarted = await restartedOver(t, next, entry);
+    assert.equal(restarted.failure, undefined);
+    assert.deepEqual(restarted.signalled(world.escaped), ['SIGSTOP', 'SIGKILL']);
+    assert.deepEqual(restarted.events.filter(({ pid }) => pid === world.escaped).map(({ dispatch, card, event }) => [dispatch, card, event]), [['d-tracked', 1467, 'recorded.killed']]);
+  });
+  await t.test('R10: a tracked process whose entry rewrite failed is killed and recorded by the exit within its budget', async (t) => {
+    const clock = manualClock(0);
+    const world = trackerWorld(clock);
+    const row = world.table.get(world.escaped);
+    world.table.delete(world.escaped);
+    const ran = trackedThroughL1(t, world, clock);
+    await turn(t);
+    // The record's rewrite goes through its partial file, which a directory at that path refuses.
+    mkdirSync(join(ran.state, 'groups.json.partial'));
+    world.table.set(world.escaped, row);
+    await clock.advance(1000);
+    await turn(t);
+    assert.ok(world.reads.filter(({ args }) => args.includes('-A')).length >= 2, 'no tracker read followed the refusal, so this proves nothing');
+    assert.equal(ran.tracked(), undefined, 'the rewrite naming the process did not fail, so this proves nothing');
+    // Its parent exits, so the exit's final read no longer shows it as the dispatch's.
+    row.parent = 1;
+    exitCleanup();
+    await ran.running.catch(() => {});
+    assert.ok(world.signals.some(({ target, name }) => target === world.escaped && name === 'SIGKILL'), 'the exit did not kill the tracked process');
+    assert.deepEqual(ran.sink.events.filter(({ pid }) => pid === world.escaped).map(({ dispatch, card, event }) => [dispatch, card, event]), [['d-tracked', 1467, 'survivor.killed']]);
+  });
 });

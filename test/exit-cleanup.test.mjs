@@ -27,6 +27,7 @@ import { EX_CAUSAL_CASES } from './process-proof-fixture.mjs';
 import { gone, tailIn } from './process-fixtures.mjs';
 import { BUDGET, assertAllEnded } from './exit-budget-world.mjs';
 import { descendantCommand, descendantsReady, holding, processState } from './process-fixtures.mjs';
+import { assertUntouched, startOf, until } from './process-fixtures.mjs';
 
 // A bound on the test alone, so that a caller which never ends fails here rather than holding the
 // suite: nothing waits on it once the caller has ended.
@@ -2115,4 +2116,70 @@ test('X6: a group that had the bare kill keeps its entry, its survivors outlive 
 // proves R-STATE-19
 test('X11: one dispatch whose every read answers at the last moment, with a member the kill does not end and a survivor in both directories, ends within EXIT_BOUND less EXIT_CARE_BOUND', ENDS_WITHIN, (t) => {
   BUDGET.lastMoment((plan) => budgeted(t, plan), (shown) => t.diagnostic(shown));
+});
+
+/**
+ * The caller for R6: a Node process that dispatches two commands through L1's function and holds
+ * them until it receives SIGTERM. The first, `one/command`, runs on the host's clock. The second,
+ * `two/command`, runs on a clock a minute ahead, so the exit reaches it once `EXIT_CARE_BOUND` has
+ * passed by the first's clock and kills its group bare, as X6's caller has it.
+ */
+const PAST_BUDGET_CALLER = String.raw`
+import { join } from 'node:path';
+import { dispatch } from ${moduleAt('../src/execution/run.mjs')};
+import { openSink } from ${moduleAt('../src/observation/sink.mjs')};
+import { atExit } from ${moduleAt('../src/substrate/process.mjs')};
+import { realHost } from ${moduleAt('../src/substrate/host.mjs')};
+
+const [directory] = process.argv.slice(2);
+const state = join(directory, 'state');
+const sink = openSink({ directory: state, run: 'r-past-budget', now: () => 0 });
+atExit(sink.end);
+const ahead = { ...realHost, clock: { ...realHost.clock, now: () => Date.now() + 60_000 } };
+for (const [label, host] of [['one', realHost], ['two', ahead]]) {
+  const workspace = join(directory, label);
+  dispatch({ id: 'd-' + label, card: 1467, directory: state, sink, command: join(workspace, 'command'), args: [], cwd: workspace, workspace, env: {}, timeout: 600_000, host }).catch(() => {});
+}
+`;
+
+// Host reason: OS behaviour; a real SIGTERM's exit past its budget must leave a real process in a session of its own alive, and a later start's real stop and kill end it.
+// Deterministic counterpart: test/exit-budget.test.mjs :: a dispatch's entry names each process the tracker adds, keeps it whatever later reads show, and its exit ends one whose rewrite failed
+// proves R-STATE-29
+test('R6: an exit past EXIT_CARE_BOUND leaves M6 alive and its entry recording it, and the next start ends M6 and records its kill', ENDS_WITHIN, async (t) => {
+  const directory = holding(t);
+  const [one, two] = ['one', 'two'].map((label) => join(directory, label));
+  for (const workspace of [one, two]) {
+    mkdirSync(workspace);
+    writeFileSync(join(workspace, 'hold'), '');
+  }
+  fixture(one, 'command', 'exec /usr/bin/tail -f "$here/hold"');
+  descendantCommand(two);
+  const state = join(directory, 'state');
+  const caller = join(directory, 'past-budget.mjs');
+  writeFileSync(caller, PAST_BUDGET_CALLER);
+  const engine = spawn(process.execPath, [caller, directory], { stdio: ['ignore', 'ignore', 'pipe'] });
+  t.after(() => engine.kill('SIGKILL'));
+  let stderr = '';
+  engine.stderr.on('data', (chunk) => { stderr += chunk; });
+  const exited = once(engine, 'exit');
+  const pids = await descendantsReady(t, two);
+  const recorded = () => readGroups(state).find(({ dispatch }) => dispatch === 'd-two')?.tracked?.find(({ pid }) => pid === pids.M6);
+  await until(() => recorded() !== undefined || engine.exitCode !== null, t);
+  const named = { pid: pids.M6, started: startOf(pids.M6) };
+  assert.deepEqual(recorded(), named, `the tracker never named M6 in the entry: ${stderr}`);
+
+  engine.kill('SIGTERM');
+  assert.equal((await exited)[1], 'SIGTERM', stderr);
+
+  const bare = streamOf(directory).filter(({ dispatch, event }) => dispatch === 'd-two' && event === 'group.killed');
+  assert.match(bare[0]?.census ?? '', /15000 ms/, `the exit did not reach d-two past its budget, so this proves nothing: ${stderr}`);
+  assertUntouched(pids.M6, 'M6 after the exit past its budget');
+  assert.deepEqual(readGroups(state).find(({ dispatch }) => dispatch === 'd-two')?.tracked?.find(({ pid }) => pid === pids.M6), named, 'the kept entry no longer records M6');
+
+  await killRecordedGroups({ directory: state, sink: openSink({ directory: state, run: 'r-next', now: () => 0 }) });
+
+  assert.equal(await gone(pids.M6), true, 'the next start left M6 alive');
+  assert.deepEqual(streamOf(directory).filter(({ pid }) => pid === pids.M6).map(({ event, dispatch, card, name, cmd }) => ({ event, dispatch, card, name, cmd })), [
+    { event: 'recorded.killed', dispatch: 'd-two', card: 1467, name: 'tail', cmd: `/usr/bin/tail -f ${two}/hold` },
+  ]);
 });
