@@ -1,0 +1,333 @@
+// ABOUTME: Throwaway tests for #1462's count.mjs, over invented event files only: each ending D1 to
+// D7, the selector, unparsed lines, the fields dropped, the extract and its digest gate.
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { createHash, randomUUID } from 'node:crypto';
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+const COMMAND = new URL('./count.mjs', import.meta.url).pathname;
+const sha = (text) => createHash('sha256').update(text).digest('hex');
+const run = (...args) => spawnSync(process.execPath, [COMMAND, ...args], { encoding: 'utf8' });
+const dir = () => mkdtempSync(join(tmpdir(), '1462-spike-engineer-'));
+
+/** A stream builder: each event one second after the last, unless `at` moves the clock. */
+function stream() {
+  const lines = [];
+  let clock = Date.parse('2026-11-18T10:00:00.000Z');
+  const emit = (run, layer, event, rest = {}) => {
+    lines.push(JSON.stringify({ ts: new Date(clock).toISOString(), run, layer, event, ...rest }));
+    clock += 1000;
+  };
+  return { lines, emit, skip: (ms) => { clock += ms; }, text: () => lines.map((line) => `${line}\n`).join('') };
+}
+const d = () => `d-${randomUUID()}`;
+function source(text) {
+  const directory = dir();
+  writeFileSync(join(directory, 'events.jsonl'), text);
+  return directory;
+}
+/** The value printed on the one line that starts with `label: `. */
+function value(output, label) {
+  const found = output.split('\n').filter((line) => line.startsWith(`${label}: `));
+  assert.equal(found.length, 1, `${label} is printed once in:\n${output}`);
+  return found[0].slice(label.length + 2);
+}
+/** One claim: the pull, the L3 dispatch and the L1 start. */
+function begin(s, r, card, id, fields = { role: 'engineer', tier: 'standard', attempt: 1 }) {
+  s.emit(r, 'L3', 'pull', { card, kind: 'change', queueDepth: 0, inFlight: 0 });
+  s.emit(r, 'L3', 'dispatch', { card, dispatch: id, ...fields });
+  s.emit(r, 'L1', 'dispatch.start', { card, dispatch: id, command: '/private/bin/agent', timeout: 60000, workspace: '/private/ws', facts: { a: 'free text' } });
+}
+const end = (s, r, card, id, fields) => s.emit(r, 'L1', 'dispatch.end', { card, dispatch: id, ...fields });
+const release = (s, r, card) => s.emit(r, 'L3', 'slot.release', { card });
+const counts = (text) => { const p = run(source(text)); assert.equal(p.status, 0, p.stderr); return p.stdout; };
+
+test('completed: exit 0 then slot.release is no ending', () => {
+  const s = stream(); const r = randomUUID(); const id = d();
+  begin(s, r, 7, id); end(s, r, 7, id, { exit: 0, ms: 2000 }); release(s, r, 7);
+  const out = counts(s.text());
+  assert.equal(value(out, 'completed, exit 0'), '1');
+  for (const row of ['D1', 'D2', 'D3', 'D4', 'D5']) assert.match(value(out, `${row} dispatches`), /^0/);
+  assert.equal(value(out, 'engine deaths, runs with a D1 or D2 dispatch'), '0');
+});
+
+test('D1: a start with no end and no release; a later run\'s recorded.killed shows the process alive', () => {
+  const s = stream(); const a = randomUUID(); const b = randomUUID(); const id = d();
+  begin(s, a, 7, id);
+  s.skip(600_000);
+  s.emit(b, 'L0', 'recorded.killed', { card: 7, dispatch: id, pid: 1, name: 'x', cmd: 'x --secret' });
+  s.emit(b, 'L3', 'run.start', { concurrency: 2 });
+  const out = counts(s.text());
+  assert.equal(value(out, 'D1 dispatches'), '1');
+  assert.equal(value(out, 'D1 with a recorded.killed from a later run'), '1');
+  assert.equal(value(out, 'D1 without one'), '0');
+  assert.equal(value(out, 'engine deaths, runs with a D1 or D2 dispatch'), '1');
+  assert.equal(value(out, 'engine deaths, D1 only'), '1');
+});
+
+test('D1: a recorded.killed in the same run, or of another dispatch, shows nothing', () => {
+  const s = stream(); const a = randomUUID(); const b = randomUUID(); const id = d();
+  begin(s, a, 7, id);
+  s.emit(a, 'L0', 'recorded.killed', { card: 7, dispatch: id, pid: 1 });
+  s.emit(b, 'L0', 'recorded.killed', { card: 7, dispatch: d(), pid: 1 });
+  const out = counts(s.text());
+  assert.equal(value(out, 'D1 with a recorded.killed from a later run'), '0');
+  assert.equal(value(out, 'D1 without one'), '1');
+});
+
+test('D2: an exit-cleanup end at the run\'s tail with no release, the maker\'s earlier end staying completed', () => {
+  const s = stream(); const a = randomUUID(); const maker = d(); const judge = d();
+  begin(s, a, 7, maker); end(s, a, 7, maker, { exit: 0, ms: 2000 });
+  s.emit(a, 'L0', 'call.end', { card: 7, system: 'forge', side: 'read', ms: 3, outcome: 'ok' });
+  s.emit(a, 'L3', 'dispatch', { card: 7, dispatch: judge, role: 'reviewer', tier: 'standard' });
+  s.emit(a, 'L1', 'dispatch.start', { card: 7, dispatch: judge, command: 'x', timeout: 1 });
+  s.emit(a, 'L0', 'survivor.killed', { card: 7, dispatch: judge, pid: 2, name: 'n', cmd: 'c' });
+  end(s, a, 7, judge, { exit: 137, ms: 9000 });
+  const out = counts(s.text());
+  assert.equal(value(out, 'D2 dispatches'), '1');
+  assert.equal(value(out, 'completed, exit 0'), '1');
+  assert.equal(value(out, 'D3 dispatches'), '0');
+  assert.equal(value(out, 'engine deaths, D2 only'), '1');
+  assert.match(out, /^event 1: D2, judge or other role, elapsed 9000 ms,/m);
+});
+
+test('D2: an end with unread, whose reason stays out of the output', () => {
+  const s = stream(); const a = randomUUID(); const id = d();
+  begin(s, a, 7, id); end(s, a, 7, id, { unread: 'private reason', ms: 9000, kept: 'private path' });
+  const out = counts(s.text());
+  assert.equal(value(out, 'D2 dispatches'), '1');
+  assert.equal(value(out, 'D2 by how it ended'), 'exit 0: 0, exit 1 to 128: 0, exit above 128: 0, unread: 1');
+  assert.doesNotMatch(out, /private/);
+});
+
+test('D3: a non-zero exit and a release, split above 128 and by step', () => {
+  const s = stream(); const a = randomUUID(); const [x, y, z] = [d(), d(), d()];
+  begin(s, a, 7, x); end(s, a, 7, x, { exit: 1, ms: 1 }); release(s, a, 7);
+  begin(s, a, 8, y); end(s, a, 8, y, { exit: 143, ms: 1 }); release(s, a, 8);
+  begin(s, a, 9, z, { step: 'install', attempt: 1 }); end(s, a, 9, z, { exit: 2, ms: 1 }); release(s, a, 9);
+  const out = counts(s.text());
+  assert.equal(value(out, 'D3 dispatches'), '3');
+  assert.equal(value(out, 'D3 of agents'), '2');
+  assert.equal(value(out, 'D3 of provisioning steps'), '1');
+  assert.equal(value(out, 'D3 with exit above 128'), '1');
+  assert.equal(value(out, 'engine deaths, runs with a D1 or D2 dispatch'), '0');
+});
+
+test('D3: a non-zero exit the engine outlived, in a claim later interrupted, is no D2', () => {
+  const s = stream(); const a = randomUUID(); const [x, y] = [d(), d()];
+  begin(s, a, 7, x); end(s, a, 7, x, { exit: 1, ms: 1 });
+  s.emit(a, 'L2', 'attempt.failed', { card: 7, dispatch: x, attempt: 1, class: 'environment', reason: 'free text' });
+  s.emit(a, 'L3', 'dispatch', { card: 7, dispatch: y, role: 'engineer', tier: 'standard', attempt: 2 });
+  s.emit(a, 'L1', 'dispatch.start', { card: 7, dispatch: y, command: 'x', timeout: 1 });
+  const out = counts(s.text());
+  assert.equal(value(out, 'D3 dispatches'), '1');
+  assert.equal(value(out, 'D1 dispatches'), '1');
+  assert.equal(value(out, 'D2 dispatches'), '0');
+});
+
+test('D4: a dispatch.timeout and an end, not D3', () => {
+  const s = stream(); const a = randomUUID(); const id = d();
+  begin(s, a, 7, id); s.emit(a, 'L0', 'timeout.killed', { card: 7, dispatch: id, pid: 1 });
+  s.emit(a, 'L1', 'dispatch.timeout', { card: 7, dispatch: id, timeout: 60000 });
+  end(s, a, 7, id, { exit: 137, ms: 60000 }); release(s, a, 7);
+  const out = counts(s.text());
+  assert.equal(value(out, 'D4 dispatches'), '1');
+  assert.equal(value(out, 'D3 dispatches'), '0');
+});
+
+test('D5: an end with reason and no exit; an L3 dispatch with no L1 start is counted apart', () => {
+  const s = stream(); const a = randomUUID(); const id = d();
+  begin(s, a, 7, id); end(s, a, 7, id, { reason: 'free text', ms: 1 }); release(s, a, 7);
+  s.emit(a, 'L3', 'pull', { card: 8, kind: 'change', queueDepth: 0, inFlight: 0 });
+  s.emit(a, 'L3', 'dispatch', { card: 8, dispatch: d(), role: 'engineer', tier: 'standard', attempt: 1 });
+  release(s, a, 8);
+  const out = counts(s.text());
+  assert.equal(value(out, 'D5 dispatches'), '1');
+  assert.equal(value(out, 'L3 dispatches with no dispatch.start'), '1 (claim released: 1, claim not released: 0)');
+});
+
+test('D6: gaps in ts within a run, in flight or not', () => {
+  const s = stream(); const a = randomUUID(); const id = d();
+  s.emit(a, 'L3', 'run.start', { concurrency: 1 });
+  s.skip(700_000);
+  begin(s, a, 7, id); s.skip(4_000_000); end(s, a, 7, id, { exit: 0, ms: 1 }); release(s, a, 7);
+  const out = counts(s.text());
+  assert.equal(value(out, 'D6 gaps of 10 minutes or more between a run\'s events'), '2 (a dispatch in flight: 1, none in flight: 1)');
+  assert.equal(value(out, 'D6 gaps of 1 hour or more between a run\'s events'), '1 (a dispatch in flight: 1, none in flight: 0)');
+});
+
+test('D7: call.end by system and outcome, and class environment by event', () => {
+  const s = stream(); const a = randomUUID();
+  for (const [system, outcome] of [['forge', 'ok'], ['forge', 'failed'], ['git', 'timed-out'], ['git', 'ok']]) s.emit(a, 'L0', 'call.end', { system, ms: 1, outcome });
+  s.emit(a, 'L2', 'maker.failed', { card: 7, dispatch: d(), class: 'environment', reason: 'x' });
+  const out = counts(s.text());
+  assert.equal(value(out, 'D7 call.end forge'), 'ok: 1, failed: 1, timed-out: 0');
+  assert.equal(value(out, 'D7 call.end git'), 'ok: 1, failed: 0, timed-out: 1');
+  assert.equal(value(out, 'D7 class environment events'), '1 (maker.failed: 1)');
+});
+
+test('redos, interruptions, work claims and host faults match report\'s definitions', () => {
+  const s = stream(); const a = randomUUID(); const b = randomUUID(); const [x, y] = [d(), d()];
+  s.emit(a, 'L3', 'run.start', { concurrency: 1 });
+  begin(s, a, 7, x);
+  s.emit(a, 'L3', 'pull', { card: 8, kind: 'change', queueDepth: 0, inFlight: 0 });
+  s.emit(a, 'L3', 'merge.start', { card: 8, pull: 1 });
+  s.skip(100_000);
+  s.emit(b, 'L3', 'run.start', { concurrency: 1 });
+  begin(s, b, 7, y); end(s, b, 7, y, { exit: 0, ms: 5000 }); release(s, b, 7);
+  const out = counts(s.text());
+  assert.equal(value(out, 'work claims'), '2');
+  assert.equal(value(out, 'work claims that dispatched'), '2');
+  assert.equal(value(out, 'work claims interrupted'), '1');
+  assert.equal(value(out, 'first attempts'), '1');
+  assert.equal(value(out, 'redos after an interruption'), '1');
+  // Last event of run a is merge.start at +5 s, its start at +3 s; run b's run.start is at +106 s.
+  assert.match(out, /^event 1: D1, maker, elapsed 2000 to 103000 ms, recorded\.killed no, redo yes, redo pulled 102000 ms after the run's last event, redo dispatch 5000 ms$/m);
+});
+
+test('a start with no end whose claim was released is counted apart', () => {
+  const s = stream(); const a = randomUUID(); const id = d();
+  begin(s, a, 7, id); release(s, a, 7);
+  const out = counts(s.text());
+  assert.equal(value(out, 'D1 dispatches'), '0');
+  assert.equal(value(out, 'no ending fits'), '1');
+});
+
+test('a later event: no counts, no extract, only how many', () => {
+  const s = stream(); const a = randomUUID();
+  begin(s, a, 7, d());
+  const text = `${s.text()}${JSON.stringify({ ts: '2026-11-24T15:35:09.001Z', run: a, layer: 'L3', event: 'pull', card: 7 })}\n`;
+  const p = run(source(text));
+  assert.equal(p.status, 3);
+  assert.equal(p.stdout, 'events later than the selector: 1\n');
+  assert.equal(p.stderr, '');
+  const archive = dir(); chmodSync(archive, 0o700);
+  assert.equal(run(source(text), archive, '0'.repeat(64)).status, 3);
+  assert.equal(existsSync(join(archive, 'events.jsonl')), false);
+  assert.equal(run(source(text), '--lines').stdout, 'events later than the selector: 1\n');
+});
+
+test('the selector keeps its own instant, and a later fragment counts as later', () => {
+  const a = randomUUID();
+  const at = (ts) => JSON.stringify({ ts, run: a, layer: 'L3', event: 'trigger', trigger: 'pull' });
+  assert.equal(value(counts(`${at('2026-11-24T15:35:09.000Z')}\n`), 'lines kept'), '1');
+  assert.equal(run(source(`${at('2026-11-25T00:00:00.000Z').slice(0, 60)}\n`)).stdout, 'events later than the selector: 1\n');
+});
+
+test('unparsed lines are counted, a fragment before a whole event is passed over', () => {
+  const s = stream(); const a = randomUUID();
+  s.emit(a, 'L3', 'run.start', { concurrency: 1 });
+  const whole = s.lines[0];
+  const text = `${whole}\n${whole.slice(0, 50)}${whole}\nnot json\n\n{"a":1}\n${whole.slice(0, 40)}`;
+  const out = counts(text);
+  assert.equal(value(out, 'lines read'), '6');
+  assert.equal(value(out, 'lines later than the selector'), '0');
+  assert.equal(value(out, 'lines unparsed'), '4');
+  assert.equal(value(out, 'lines kept'), '2');
+  assert.equal(value(out, 'kept lines read past a torn fragment'), '1');
+});
+
+const FIELDS = ['ts', 'run', 'layer', 'event', 'card', 'dispatch', 'exit', 'ms', 'role', 'attempt', 'class', 'outcome', 'system', 'concurrency', 'reason', 'unread', 'kept', 'step', 'census', 'maker'];
+
+test('the extract holds the listed fields alone, marks for the text ones, and nothing of a value out of shape', () => {
+  const s = stream(); const a = randomUUID(); const id = d();
+  begin(s, a, 7, id, { step: 'secret step', attempt: 1 });
+  s.emit(a, 'L0', 'group.killed', { card: 7, dispatch: id, group: 5, census: 'secret census' });
+  s.emit(a, 'L2', 'attempt.failed', { card: 7, dispatch: id, maker: 'secret-maker', class: 'secret class', outcome: 'secret outcome', role: 'has space secret', env: { KEY: 'secret' }, exit: 'secret', ms: 'secret', system: 'secret' });
+  end(s, a, 7, id, { exit: 0, ms: 2, reason: 'secret', unread: 'secret', kept: 'secret', folderLeft: [{ path: '/secret' }] });
+  const lines = run(source(s.text()), '--lines').stdout;
+  assert.doesNotMatch(lines, /secret|private|free text/);
+  for (const line of lines.trimEnd().split('\n')) for (const key of Object.keys(JSON.parse(line))) assert.ok(FIELDS.includes(key), key);
+  const last = JSON.parse(lines.trimEnd().split('\n').at(-1));
+  assert.deepEqual([last.reason, last.unread, last.kept, last.step, last.census, last.maker], [true, true, true, false, false, false]);
+  const out = counts(s.text());
+  assert.equal(value(out, 'values dropped as outside their field\'s shape'), '6 (exit: 1, ms: 1, role: 1, class: 1, outcome: 1, system: 1)');
+  assert.doesNotMatch(out, /secret|private|free text/);
+});
+
+test('the archive run writes the checked lines alone, mode 600, and only for the digest passed', () => {
+  const s = stream(); const a = randomUUID(); const id = d();
+  begin(s, a, 7, id); end(s, a, 7, id, { exit: 137, ms: 5 });
+  const from = source(s.text());
+  const lines = run(from, '--lines').stdout;
+  const digest = value(run(from).stdout, 'private, sha256 of the filtered lines');
+  assert.equal(digest, sha(lines));
+  const archive = dir(); chmodSync(archive, 0o700);
+  const wrong = run(from, archive, '0'.repeat(64));
+  assert.equal(wrong.status, 4);
+  assert.equal(existsSync(join(archive, 'events.jsonl')), false);
+  const p = run(from, archive, digest);
+  assert.equal(p.status, 0, p.stderr);
+  const file = join(archive, 'events.jsonl');
+  assert.equal(readFileSync(file, 'utf8'), lines);
+  assert.equal(statSync(file).mode & 0o777, 0o600);
+  assert.equal(value(p.stdout, 'private, sha256 of the extract as read back'), digest);
+  assert.equal(value(p.stdout, 'extract lines'), '5');
+  assert.equal(value(p.stdout, 'private, sha256 of the window\'s lines, before'), sha(s.text()));
+  assert.equal(value(p.stdout, 'private, sha256 of the window\'s lines, after'), sha(s.text()));
+  assert.equal(run(from, archive, digest).status, 4, 'never overwrites');
+  // A judge reruns the count over the extract: the counts are the same, and so is the digest.
+  const section = (text) => text.slice(text.indexOf('== counts'), text.indexOf('== private'));
+  assert.ok(section(p.stdout).length > 500);
+  assert.equal(section(run(archive).stdout), section(p.stdout));
+  assert.equal(value(run(archive).stdout, 'private, sha256 of the filtered lines'), digest);
+});
+
+test('the archive must exist and be owner-only', () => {
+  const s = stream(); s.emit(randomUUID(), 'L3', 'run.start', { concurrency: 1 });
+  const from = source(s.text());
+  const digest = value(run(from).stdout, 'private, sha256 of the filtered lines');
+  const open = dir(); chmodSync(open, 0o755);
+  assert.equal(run(from, open, digest).status, 4);
+  assert.equal(existsSync(join(open, 'events.jsonl')), false);
+  assert.equal(run(from, join(open, 'absent'), digest).status, 4);
+});
+
+test('only a regular events.jsonl is opened, and nothing printed names a path', () => {
+  const directory = dir();
+  mkdirSync(join(directory, 'output'));
+  writeFileSync(join(directory, 'events-old.jsonl'), 'x\n');
+  const none = run(directory);
+  assert.equal(none.status, 2);
+  assert.doesNotMatch(none.stdout + none.stderr, /\//);
+  const real = source('');
+  symlinkSync(join(real, 'events.jsonl'), join(directory, 'events.jsonl'));
+  assert.equal(run(directory).status, 2);
+  const s = stream(); s.emit(randomUUID(), 'L3', 'run.start', { concurrency: 1 });
+  const from = source(s.text());
+  writeFileSync(join(from, 'events-old.jsonl'), 'x\n');
+  assert.equal(value(run(from).stdout, 'other entries named like a stream, not read'), '1');
+});
+
+test('the source is unchanged by every form of the command', () => {
+  const s = stream(); s.emit(randomUUID(), 'L3', 'run.start', { concurrency: 1 });
+  const from = source(s.text());
+  const before = statSync(join(from, 'events.jsonl')).mtimeMs;
+  run(from); run(from, '--lines');
+  assert.equal(statSync(join(from, 'events.jsonl')).mtimeMs, before);
+  assert.equal(readFileSync(join(from, 'events.jsonl'), 'utf8'), s.text());
+});
+
+test('two dispatches one engine death ended count as one death', () => {
+  const s = stream(); const a = randomUUID(); const [x, y] = [d(), d()];
+  begin(s, a, 7, x); begin(s, a, 8, y);
+  end(s, a, 7, x, { exit: 143, ms: 1 }); end(s, a, 8, y, { exit: 143, ms: 1 });
+  const out = counts(s.text());
+  assert.equal(value(out, 'D2 dispatches'), '2');
+  assert.equal(value(out, 'engine deaths, runs with a D1 or D2 dispatch'), '1');
+});
+
+test('dispatch hours: ms of ended dispatches, and both bounds for a start with no end', () => {
+  const s = stream(); const a = randomUUID(); const b = randomUUID(); const [x, y] = [d(), d()];
+  begin(s, a, 7, x); end(s, a, 7, x, { exit: 0, ms: 3_600_000 }); release(s, a, 7);
+  begin(s, a, 8, y); s.emit(a, 'L3', 'trigger', { trigger: 'pull' });
+  s.skip(3_599_000 - 1000 + 1000);
+  s.emit(b, 'L3', 'run.start', { concurrency: 1 });
+  const out = counts(s.text());
+  assert.equal(value(out, 'dispatch hours, ended dispatches'), '1.0000');
+  assert.equal(value(out, 'dispatch hours, starts with no end, to the run\'s last event'), '0.0003');
+  assert.equal(value(out, 'dispatch hours, starts with no end, to the next run\'s start'), '1.0000');
+});

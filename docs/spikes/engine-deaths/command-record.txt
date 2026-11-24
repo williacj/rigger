@@ -1,0 +1,269 @@
+ABOUTME: #1462's published command record: every command its recorder ran, in order, as exact argv with its UTC start and
+end and its exit. A private identifier is a fixed placeholder (<source>, <archive>, <digest>), written so as it was captured.
+
+Every command ran in the spike's throwaway directory, spikes/1462/, or the worktree root where a name starts spikes/. Each
+argv is shown as bash's printf %q quotes it. Four things are beside this file:
+- source/ holds the last text of each script, and source/versions/ each earlier text a run executed;
+- versions.txt says which text each of runs 001 to 032 had, and "Script versions" in the report says the same of runs 034 on;
+- session-commands.txt holds the commands the recorder did not run;
+- mutation-evidence.txt holds run 035's output.
+The test file ran as count.test.mjs. It is published as count.test.mjs.txt, so that the suite does not discover it.
+Runs 026, 031 and 033 do not exist: the numbering counted files added to the archive by hand.
+
+### run 001
+start 2026-11-24T17:19:56Z
+command node --test spikes/1462/count.test.mjs
+exit 1
+end 2026-11-24T17:19:59Z
+
+### run 002
+start 2026-11-24T17:21:21Z
+command node --test spikes/1462/count.test.mjs
+exit 1
+end 2026-11-24T17:21:27Z
+
+### run 003
+start 2026-11-24T17:21:51Z
+command node --test count.test.mjs
+exit 1
+end 2026-11-24T17:21:58Z
+
+### run 004
+start 2026-11-24T17:21:58Z
+command node --test count.test.mjs
+exit 0
+end 2026-11-24T17:22:06Z
+
+### run 005
+start 2026-11-24T17:22:24Z
+command ./mutants.sh
+exit 0
+end 2026-11-24T17:24:00Z
+
+### run 006
+start 2026-11-24T17:24:15Z
+command node --test count.test.mjs
+exit 0
+end 2026-11-24T17:24:20Z
+
+### run 007
+start 2026-11-24T17:24:20Z
+command ./mutants.sh
+exit 0
+end 2026-11-24T17:25:37Z
+
+### run 008
+start 2026-11-24T17:25:44Z
+command node --test count.test.mjs
+exit 0
+end 2026-11-24T17:25:48Z
+
+### run 009
+start 2026-11-24T17:25:48Z
+command ./mutants.sh
+exit 0
+end 2026-11-24T17:27:07Z
+
+### run 010
+start 2026-11-24T17:30:39Z
+command node --test count.test.mjs
+exit 1
+end 2026-11-24T17:30:45Z
+
+### run 011
+start 2026-11-24T17:31:17Z
+command node --test count.test.mjs
+exit 1
+end 2026-11-24T17:31:24Z
+
+### run 012
+start 2026-11-24T17:31:43Z
+command node --test count.test.mjs
+exit 0
+end 2026-11-24T17:31:50Z
+
+### run 013
+start 2026-11-24T17:31:50Z
+command ./mutants.sh
+exit 0
+end 2026-11-24T17:35:33Z
+
+### run 014
+start 2026-11-24T17:35:42Z
+command node --test count.test.mjs
+exit 0
+end 2026-11-24T17:35:49Z
+
+### run 015
+start 2026-11-24T17:35:49Z
+command ./mutants.sh
+exit 0
+end 2026-11-24T17:39:33Z
+
+### run 016
+start 2026-11-24T17:41:51Z
+command mkdir -m 700 <archive>
+exit 0
+end 2026-11-24T17:41:51Z
+
+### run 017
+start 2026-11-24T17:41:51Z
+command node count.mjs <source> <archive> <digest>
+exit 0
+end 2026-11-24T17:41:51Z
+
+### run 018
+start 2026-11-24T17:42:08Z
+command node count.mjs <archive>
+exit 0
+end 2026-11-24T17:42:09Z
+
+### run 019
+start 2026-11-24T17:42:16Z
+command ./fetch.sh
+exit 0
+end 2026-11-24T17:43:39Z
+
+### run 020
+start 2026-11-24T17:43:50Z
+command node search.mjs journal a0f5a970
+exit 0
+end 2026-11-24T17:43:50Z
+
+### run 021
+start 2026-11-24T17:43:50Z
+command node search.mjs comments public/comments.jsonl
+exit 0
+end 2026-11-24T17:43:52Z
+
+### run 022
+start 2026-11-24T17:44:00Z
+command node search.mjs journal a0f5a970
+exit 0
+end 2026-11-24T17:44:07Z
+
+### run 023
+start 2026-11-24T17:44:07Z
+command node search.mjs comments public/comments.jsonl
+exit 0
+end 2026-11-24T17:44:09Z
+
+### run 024
+start 2026-11-24T17:48:03Z
+command node hosts.mjs journal a0f5a970
+exit 0
+end 2026-11-24T17:48:09Z
+
+### run 025
+start 2026-11-24T17:48:09Z
+command node hosts.mjs comments public/comments.jsonl
+exit 0
+end 2026-11-24T17:48:11Z
+
+### run 027
+start 2026-11-24T17:48:55Z
+command ./builds.sh 2a581bde c40377da ebe7949e 3e325ab8 b23d656d
+exit 0
+end 2026-11-24T17:48:56Z
+
+### run 028
+start 2026-11-24T17:50:36Z
+command sh -c sed\ -n\ \'/\^==\ reading/\,/\^==\ private/p\'\ \"\$SPIKE_RUNS/017.txt\"\ \|\ sed\ -E\ \'/\^==\ private/d\;\ s/\^\(window\,\ \(first\|last\)\ kept\ event:\ \[0-9-\]+T\[0-9\]\{2\}:\[0-9\]\{2\}\).\*/\\1Z\ \(shortened\ to\ the\ minute\)/\'
+exit 0
+end 2026-11-24T17:50:36Z
+
+### run 029
+start 2026-11-24T17:50:36Z
+command node calc.mjs ../../docs/spikes/engine-deaths/counts.txt
+exit 0
+end 2026-11-24T17:50:36Z
+
+### run 030
+start 2026-11-24T17:50:36Z
+command sh -c git\ ls-tree\ -r\ --full-tree\ --name-only\ a0f5a970\ docs/journal\ \|\ sed\ \'s\|.\*/\|\|\'\ \|\ grep\ \'\^2\'\ \|\ sed\ -n\ \'1p\;\$p\'
+exit 0
+end 2026-11-24T17:50:36Z
+
+### run 032
+start 2026-11-24T18:10:20Z
+command bash -c diff\ <\(sed\ -n\ \"/\^==\ counts/\,/\^==\ private/p\"\ \"\$SPIKE_RUNS/017.txt\"\)\ \<\(sed\ -n\ \"/\^==\ counts/\,/\^==\ private/p\"\ \"\$SPIKE_RUNS/018.txt\"\)\ \&\&\ echo\ \"the\ counts\ sections\ are\ equal\"
+exit 0
+end 2026-11-24T18:10:20Z
+
+### run 034
+start 2026-11-24T21:16:00Z
+command node mutation.mjs
+exit 1
+end 2026-11-24T21:16:07Z
+
+### run 035
+start 2026-11-24T21:16:23Z
+command node mutation.mjs
+exit 0
+end 2026-11-24T21:20:22Z
+
+### run 036
+start 2026-11-24T21:20:41Z
+command python3 -I recover.py versions-all
+exit 0
+end 2026-11-24T21:20:42Z
+
+### run 037
+start 2026-11-24T21:20:42Z
+command python3 -I session.py
+exit 0
+end 2026-11-24T21:20:42Z
+
+### run 038
+start 2026-11-24T21:20:42Z
+command node temporal.mjs a0f5a970
+exit 0
+end 2026-11-24T21:20:42Z
+
+### run 039
+start 2026-11-24T21:20:42Z
+command sh -c gh\ api\ repos/williacj/rigger/issues/comments/6981560600\ --jq\ \'.created_at\,\ \(.body\ \|\ split\(\"\\n\"\)\[\]\ \|\ select\(test\(\"launchd\ starts\ an\ unlisted\ run\ 3600\ s\"\)\)\)\'
+exit 0
+end 2026-11-24T21:20:42Z
+
+### run 040
+start 2026-11-24T21:20:43Z
+command sh -c for\ id\ in\ 7139235069\ 7139559927\;\ do\ gh\ api\ repos/williacj/rigger/issues/comments/\$id\ --jq\ \".created_at\,\ .updated_at\"\;\ done
+exit 0
+end 2026-11-24T21:20:44Z
+
+### run 041
+start 2026-11-24T21:20:44Z
+command node -e const\ bound\ =\ 2.996\ /\ 9.6267\ \*\ 100\;\ console.log\(\`no\ death\ in\ 9.6267\ engine\ hours\,\ one-sided\ 95%\ bound:\ \$\{bound.toFixed\(1\)\}\ per\ 100\ engine\ hours\,\ \$\{\(bound\ /\ 5\).toFixed\(1\)\}\ times\ 5\`\)\;
+exit 0
+end 2026-11-24T21:20:44Z
+
+### run 042
+start 2026-11-24T21:20:44Z
+command sh -c gh\ api\ repos/williacj/rigger/issues/comments/7112776030\ --jq\ \'.body\'\ \|\ grep\ -oE\ \'Those\ runs\ failed\ only\ on\ L7\[\^\,\]\*\,\ a\ known-flaky\ test\[\^\,\]\*\'
+exit 0
+end 2026-11-24T21:20:44Z
+
+### run 043
+start 2026-11-24T21:20:55Z
+command python3 -I session.py
+exit 0
+end 2026-11-24T21:20:55Z
+
+### run 044
+start 2026-11-24T21:34:24Z
+command python3 -I recover.py versions-2
+exit 0
+end 2026-11-24T21:34:25Z
+
+### run 045
+start 2026-11-24T21:34:25Z
+command python3 -I session.py
+exit 0
+end 2026-11-24T21:34:25Z
+
+### run 046
+start 2026-11-24T21:34:25Z
+command sh -c for\ v\ in\ 1\ 2\;\ do\ grep\ -cE\ \"\^\[\^#\|\]\*\\\|s\"\ versions-all/mutants.sh.v\$v.txt\;\ done\;\ grep\ -cE\ \"\^\[\^#\|\]\*\\\|s\"\ versions-all/mutants.sh.v3.txt\;\ for\ n\ in\ 005\ 007\ 009\ 013\ 015\;\ do\ grep\ -cE\ \"\^\(killed\|SURVIVED\)\"\ \"\$SPIKE_RUNS/\$n.txt\"\;\ done
+exit 0
+end 2026-11-24T21:34:26Z

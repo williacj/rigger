@@ -1,0 +1,218 @@
+ABOUTME: The tool calls that made the runs #1462's recorder did not, whole, as run 045 printed them from the maker's session record.
+
+### 2026-11-24T17:22:24.273Z Bash: a timing of the first version over an invented stream
+cd /Users/cjwilliams/GitHub/rigger-worktrees/1462-spike-engineer/spikes/1462; t=$(mktemp -d <scratch>/1462-spike-engineer.XXXX); node -e '
+const {randomUUID}=require("crypto");let c=Date.parse("2026-11-10T00:00:00Z");const o=[];for(let r=0;r<200;r++){const run=randomUUID();const e=(layer,event,x={})=>{o.push(JSON.stringify({ts:new Date(c+=500).toISOString(),run,layer,event,...x}))};e("L3","run.start",{concurrency:2});for(let k=1;k<20;k++){const dispatch="d-"+randomUUID();e("L3","pull",{card:k});e("L3","dispatch",{card:k,dispatch,role:"engineer",attempt:1});e("L1","dispatch.start",{card:k,dispatch});for(let i=0;i<80;i++)e("L0","call.end",{system:"git",ms:1,outcome:"ok",pad:"x".repeat(200)});if(k<19){e("L1","dispatch.end",{card:k,dispatch,exit:0,ms:40000});e("L3","slot.release",{card:k})}}}
+require("fs").writeFileSync(process.argv[1]+"/events.jsonl",o.join("\n")+"\n")' $t; ls -l $t/events.jsonl | awk '{print $5}'; time node count.mjs $t > $t/out; head -8 $t/out; node count.mjs $t --lines | shasum -a 256 | cut -c1-16; grep filtered $t/out | cut -c1-60; shasum -a 256 count.mjs count.test.mjs; git -C .. status --short; pgrep -fl count.mjs
+
+### 2026-11-24T17:44:32.192Z Bash: a look-up in the public records
+cd /Users/cjwilliams/GitHub/rigger-worktrees/1462-spike-engineer/; cat docs/journal/2026-11-18-1232-1416-emend-builds-and-kill.md | cut -c1-900; for id in 6987307123 6988498235; do gh api repos/williacj/rigger/issues/comments/$id --jq '.created_at,.body' | cut -c1-500 | head -60; echo ----; done
+
+### 2026-11-24T17:44:38.724Z Bash: the search of the comments that was abandoned
+cd /Users/cjwilliams/GitHub/rigger-worktrees/1462-spike-engineer/spikes/1462; jq -r '. as $c | .body | gsub("\\s*\\n\\s*(?=[a-z(`])";" ") | split("\n")[] | select(test("\\b(host|laptop|mini|machine|computer) (had |has |was |is )?(just )?(slept|went to sleep|asleep|rebooted|restarted|crashed|lost power|panicked|ran out)|kernel panic|jetsam|out of memory|OOM[- ]kill|battery|(maker|judge|reviewer|session|coordinator|engine|wrapper|codex|claude) (process )?(session )?(died|crashed|was killed|was lost|vanished|disappeared|was interrupted|hung|ended early|was terminated)|lost (its )?session|session (was )?lost|interrupted by (the|a) (reboot|host|sleep|usage|limit)|usage limit|rate limit|at capacity|context (limit|window)";"i")) | "\($c.issue)#\($c.id) \($c.created_at[0:10]): \(.[0:230])"' public/comments.jsonl | grep -viE 'R-[A-Z]+-[0-9]|mutant|fixture|✔|✖|would ' | wc -l
+jq -r '. as $c | .body | gsub("\\s*\\n\\s*(?=[a-z(`])";" ") | split("\n")[] | select(test("\\b(host|laptop|mini|machine|computer) (had |has |was |is )?(just )?(slept|went to sleep|asleep|rebooted|restarted|crashed|lost power|panicked|ran out)|kernel panic|jetsam|OOM[- ]kill|battery|(maker|judge|reviewer|session|coordinator|engine|wrapper|codex|claude) (process )?(session )?(died|crashed|was killed|was lost|vanished|disappeared|was interrupted|ended early|was terminated)|lost (its )?session|session (was )?lost|interrupted by (the|a) (reboot|host|sleep|usage|limit)";"i")) | "\($c.issue)#\($c.id) \($c.created_at[0:10]): \(.[0:230])"' public/comments.jsonl | grep -viE 'R-[A-Z]+-[0-9]|mutant|fixture|✔|✖|would |"name"|SIGKILLed while' | head -150
+
+### 2026-11-24T17:47:44.009Z Bash: a look-up in the public records
+sed -n 25,400p /Users/cjwilliams/.claude/projects/-Users-cjwilliams-GitHub-rigger/<session>/tool-results/b8wjucnhj.txt | cut -c1-420 | head -60; cd /Users/cjwilliams/GitHub/rigger-worktrees/1462-spike-engineer/; grep -n "K0\|kill -9\|SIGKILL\|redo\|deliberate" docs/journal/2026-11-18-1232-1416-emend-builds-and-kill.md | cut -c1-260 | head -20
+
+### 2026-11-24T17:47:52.298Z TaskStop: the stop of that search
+{"task_id": "bkm2kdazh"}
+
+### 2026-11-24T17:48:32.071Z Bash: a look-up in the public records
+cd /Users/cjwilliams/GitHub/rigger-worktrees/1462-spike-engineer/spikes/1462; python3 -I - <<'EOF'
+import json,re
+want={6797885425:'reboot',6773915545:'interrupted',6073475444:'interrupted',6442880637:'interrupted',7139286557:'interrupted',7031053495:'slept|kill|stop|died|bootout',7031026064:'slept',6253482345:'slept',6294566349:'capacity',6689107888:'137',5982532994:'stalled',6065267212:'interrupted',7105314957:'interrupt|slept|kill',6988498235:'SIGKILL|engine',6722: 'x'}
+for l in open('public/comments.jsonl'):
+    c=json.loads(l)
+    if c['id'] in want:
+        print('=====',c['issue'],c['id'],c['created_at'])
+        n=0
+        for p in c['body'].split('\n'):
+            if re.search(want[c['id']],p): print('  ',p[:420]); n+=1
+            if n>7: break
+EOF
+python3 -I - <<'EOF'
+import json,re
+# Emend-run cards: closing records mentioning interruption of the engine
+for l in open('/Users/cjwilliams/GitHub/rigger-worktrees/1462-spike-engineer/spikes/1462/public/comments.jsonl'):
+    c=json.loads(l)
+    if c['issue'] in (1415,1416,1417,1418,1424,1293) and c['created_at']>'2026-11-12':
+        for p in c['body'].split('\n'):
+            if re.search(r'\b(engine|run|launchd|supervis\w+|bootout|job)\b.{0,80}\b(died|crash|exited|killed|SIGTERM|SIGKILL|bootout|ended itself|stopped|relaunch|restart)',p,re.I): print(c['issue'],c['id'],c['created_at'][:16],p.strip()[:230])
+EOF
+
+### 2026-11-24T17:48:38.345Z Bash: a look-up in the public records
+cd /Users/cjwilliams/GitHub/rigger-worktrees/1462-spike-engineer/spikes/1462; python3 -I - <<'EOF'
+import json,re
+for l in open('public/comments.jsonl'):
+    c=json.loads(l)
+    if c['issue'] in (1255,1009,1382,740,1238) and '2026-11-04'<c['created_at']<'2026-11-12':
+        for p in c['body'].split('\n'):
+            if re.search(r'(fourth|4th) (maker|dispatch)|maker.{0,40}interrupt|interrupt.{0,60}(maker|dispatch|run)|exit cleanup|survivor|bootout.{0,120}(maker|dispatch)|exit(ed)? 143|SIGTERM',p) : print(c['issue'],c['id'],c['created_at'][:16],p.strip()[:380])
+EOF
+
+### 2026-11-24T17:48:54.885Z Bash: a look-up in the public records, the writing of builds.sh, and run 027; its last part failed, on a file that did not exist
+cd /Users/cjwilliams/GitHub/rigger-worktrees/1462-spike-engineer/spikes/1462; export SPIKE_RUNS=<archive>/runs; umask 077
+python3 -I - <<'EOF'
+import json,re
+for l in open('public/comments.jsonl'):
+    c=json.loads(l)
+    if '2026-11-11'<c['created_at']<'2026-11-24T15':
+        for p in c['body'].split('\n'):
+            if re.search(r'emend',p,re.I) and re.search(r'RIGGER_COMMIT|re-?pin(ned)?|pins? Rigger|rigger-builds/emend-[0-9a-f]{8}|init(ialised)?\b',p): print(c['issue'],c['id'],c['created_at'][:16],p.strip()[:200])
+EOF
+cat > builds.sh <<'EOF'
+#!/bin/bash
+# ABOUTME: Throwaway for #1462: at each Rigger commit named, prints the source lines that emit the events
+# the count reads, so the conditions can be compared across the builds whose records it reads.
+set -euo pipefail
+for commit in "$@"; do
+  printf '== %s %s\n' "$commit" "$(git log -1 --format=%cI "$commit")"
+  git show "$commit:src/execution/run.mjs" | grep -E "events\.emit\('dispatch\.start'|events\.emit\('dispatch\.end'|record\('dispatch\.(timeout|end)'|fields\.kept = |const fields = \{ \.\.\.ending" | sed 's/^ *//'
+  git show "$commit:src/scheduling/loop.mjs" | grep -E "record\('(pull|slot\.release|run\.start|trigger)'|emit\('dispatch'" | sed 's/^ *//'
+  git show "$commit:src/scheduling/lane.mjs" | grep -E "record\('merge\.(start|end)'" | sed 's/^ *//'
+  git show "$commit:src/substrate/process.mjs" | grep -cE "'recorded\.killed'" | sed 's/^/recorded.killed sites: /'
+  git show "$commit:src/substrate/process.mjs" | grep -E "return \{ exit: (child|signalled|ending)" | sed 's/^ *//'
+done
+EOF
+chmod +x builds.sh; ./rec.sh ./builds.sh 2a581bde c40377da ebe7949e 3e325ab8 b23d656d > /dev/null; python3 -I - <<'EOF'
+import os,re
+t=open(os.path.expanduser('<archive>/runs/026.txt')).read()
+parts=re.split(r'== (\w+) (\S+)\n',t)[1:]
+b={parts[i]:parts[i+2] for i in range(0,len(parts),3)}
+print(t[:3000] if len(set(b.values()))>1 else 'identical'); print({k:hash(v)%9999 for k,v in b.items()})
+import difflib
+print('\n'.join(difflib.unified_diff(b['2a581bde'].split('\n'),b['b23d656d'].split('\n'),lineterm='',n=0)))
+EOF
+
+### 2026-11-24T17:49:00.190Z Bash: a comparison of run 027's builds
+python3 -I - <<'EOF'
+import os,re,difflib
+t=open(os.path.expanduser('<archive>/runs/027.txt')).read()
+parts=re.split(r'== (\w+) (\S+)\n',t)[1:]
+b={parts[i]:parts[i+2] for i in range(0,len(parts),3)}
+print(len(set(b.values())),list(b)); print(b['b23d656d'])
+for k in b: print(k,'\n'.join(difflib.unified_diff(b['b23d656d'].split('\n'),b[k].split('\n'),lineterm='',n=0)))
+EOF
+ls <archive>/runs | tail -4; tail -8 /Users/cjwilliams/GitHub/rigger-worktrees/1462-spike-engineer/spikes/1462/record.txt
+
+### 2026-11-24T17:49:39.014Z Bash: a look-up in the public records
+cd /Users/cjwilliams/GitHub/rigger-worktrees/1462-spike-engineer; git merge -q --ff-only origin/main && git log -1 --oneline; python3 -I - <<'EOF'
+import json
+for l in open('spikes/1462/public/comments.jsonl'):
+    c=json.loads(l)
+    if c['id'] in (6073475444,6772570010): print(c['id'],c['body'][:1500],'\n---')
+    if c['id']==6772538389: print(c['id'],c['body'][:900],'\n---')
+    if c['id']==7031026064: print([p for p in c['body'].split('\n') if 'slept' in p])
+EOF
+grep -n "KeepAlive\|StartInterval\|Throttle" -A1 templates/launchd/*.plist; sed -n '/R-RECORD-2 /,/R-RECORD-3 /p' docs/spec/requirements.md | head -20; grep -n "R-RECORD-2\b" docs/spec/requirements.md | head -3; grep -n "answer alone\|not the agent" docs/spikes/temporal-dispatch-under-failure.md | head; grep -n "recovers the attempt" docs/journal/2026-11-20-0121-1429*.md; sed -n '/Go or no-go\|go or no-go/p;/What is unknown/,/^$/p' <(gh issue view 1453 -R williacj/rigger --json body --jq .body) | head -30; sed -n 1,30p docs/journal/2026-11-22-0316-1460*.md; ls docs/journal | sed -n '1p;$p'; sed -n 40,60p doc-references.json; git log -3 --format=%s -- docs/spikes
+
+### 2026-11-24T17:51:01.865Z Bash: a look-up in the public records
+cd /Users/cjwilliams/GitHub/rigger-worktrees/1462-spike-engineer; awk '/^### run/{r=$3} /^start/{s=$2} /^exit/{x=$2} /^end/{print r,s,$2,x}' spikes/1462/record.txt | sed -n '16,30p'; sed -n 12,60p docs/spikes/engine-deaths/counts.txt | grep -n "D6\|event [123]"; grep -n "^### \|^## " docs/spikes/temporal-dispatch-under-failure.md | head -40; cat .github/PULL_REQUEST_TEMPLATE.md 2>/dev/null | head; gh pr view 1472 -R williacj/rigger --json title,body --jq '.title,.body' | head -40; gh api repos/williacj/rigger/issues/comments/7136515102 --jq .body | grep -n "exit 113\|Z3" | head -3; gh api repos/williacj/rigger/issues/comments/6642 >/dev/null 2>&1; python3 -I - <<'EOF'
+import json
+for l in open('/Users/cjwilliams/GitHub/rigger-worktrees/1462-spike-engineer/spikes/1462/public/comments.jsonl'):
+    c=json.loads(l)
+    if c['id'] in (6302218636,6324234612,6113790223,6797885425): print(c['id'],c['body'][:500].replace('\n',' '),'\n')
+EOF
+
+### 2026-11-24T17:52:59.168Z Bash: the first commit, refused
+cd /Users/cjwilliams/GitHub/rigger-worktrees/1462-spike-engineer; sed -i '' 's/- \*\*A search of a 226 MB comment dump in `jq` was too slow to finish.\*\* Reading it line by line in Node took seconds./- **A `jq` search of every saved comment was too slow to finish.** Node read them line by line in seconds./' docs/journal/2026-11-24-1752-1462-engine-deaths.md
+echo "Spike #1462: how often the engine and its hosts died" > spikes/1462/pr-title.txt
+cat > spikes/1462/pr-body.md <<'EOF'
+Closes #1462
+
+Docs-only spike report: how often the processes and hosts running Rigger's work died, counted from the Emend engine's event records and this repository's public records, for the owner's go or no-go on E3.
+
+- **No rate.** The event records hold one engine death, which interrupted three maker dispatches, over 9.6 engine hours, 78 work claims and 317 dispatches. No cause is recorded for it. No host loss can be told apart from it.
+- **The public records** hold two engine deaths with a dispatch in flight, both deliberate, and no unintended one that the searches found.
+- **Recommendation:** the evidence leaves E3 open. The report gives the owner what go, no-go and wait each accept, and proposes a line to rule against.
+- **Proposals, not made here:** `ARCHITECTURE.md`, "Telemetry" and "What `report` derives"; `R-RECORD-2`.
+
+Lands in:
+
+- the report: `docs/spikes/engine-deaths.md`;
+- its evidence: `docs/spikes/engine-deaths/`, with the counts, the command record and the scripts;
+- the journal entry: `docs/journal/2026-11-24-1752-1462-engine-deaths.md`;
+- the report's entry in `doc-references.json`.
+
+The throwaway code stays in the gitignored spikes directory, and the extract only in the owner's archive. No requirement, decision or `ARCHITECTURE.md` text changes.
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+EOF
+git add docs doc-references.json && git status --short; git diff --cached | grep -nE "/Users|cjwilliams|<device>|[0-9a-f]{64}|[0-9a-f]{8}-[0-9a-f]{4}-|emend-engine|<archive>|[A-Za-z0-9._]+@[a-z]" | head; grep -rn "—" docs/spikes/engine-deaths.md | wc -l; node scripts/doc-reference-check.mjs; echo rc=$?
+cat > spikes/1462/commit-msg.txt <<'EOF'
+Report #1462: how often the engine and its hosts died
+
+E3's go or no-go needed a count nobody had made. One command read the Emend engine's event records, and two
+searches read this repository's public records. The report gives the counts, says why they support no rate,
+and hands the owner what go, no-go and wait each accept.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+EOF
+/Users/cjwilliams/GitHub/rigger/tools/coordinator/suite-slot.sh 1462-maker -- caffeinate -dims git commit -F spikes/1462/commit-msg.txt > spikes/1462/commit.log 2>&1; echo rc=$?; tail -15 spikes/1462/commit.log; git log -1 --stat | tail -18
+
+### 2026-11-24T18:01:32.776Z Bash: the commit that was made
+cd /Users/cjwilliams/GitHub/rigger-worktrees/1462-spike-engineer; A=<archive>; grep -E "^ℹ (tests|pass|fail|cancelled)|^# (tests|pass|fail)" spikes/1462/commit.log; grep -E "^✖" spikes/1462/commit.log | sort -u | sed 's/ (.*//' | grep -vE "D[1-7]|redo|extract|archive|stream|claim|event|unread|selector|unparsed|symlink|usage|reader|source|dispatch|completed" | head
+git mv docs/spikes/engine-deaths/source/count.test.mjs docs/spikes/engine-deaths/source/count.test.mjs.txt; mv spikes/1462/count.test.mjs spikes/1462/count.test.mjs.txt
+cp spikes/1462/commit.log $A/<archive file>; chmod 600 $A/<archive file>; echo "p27 <archive file>" >> $A/index.txt
+python3 - <<'EOF'
+p='docs/spikes/engine-deaths.md'; s=open(p).read()
+def rep(a,b):
+    global s
+    assert s.count(a)==1,(s.count(a),a); s=s.replace(a,b)
+rep("| p26 | 22 |\n","| p26 | 22 |\n| p27 | 22 |\n")
+rep("stopped for speed and replaced by runs 024 and 025 | p26 |\n","stopped for speed and replaced by runs 024 and 025 | p26 |\n| an unrecorded one | this report's first commit, refused: the suite discovers test files anywhere in the tree, so it ran the published test file and the spike's own copy, and the reference check read event names in code marks as paths | p27 |\n")
+rep("`docs/spikes/engine-deaths/source/count.test.mjs`","`docs/spikes/engine-deaths/source/count.test.mjs.txt`")
+open(p,'w').write(s)
+p='docs/spikes/engine-deaths/command-record.txt'; s=open(p).read()
+a="counted a file added to the archive by hand.\n"
+assert s.count(a)==1
+s=s.replace(a,a+"The test file ran as count.test.mjs. It is published as count.test.mjs.txt, so that the suite does not discover it.\n")
+open(p,'w').write(s)
+EOF
+sed -n '/Beyond the recorded/,/^## Disc/p' docs/spikes/engine-deaths.md; cat >> docs/journal/2026-11-24-1752-1462-engine-deaths.md <<'EOF'
+- **The suite discovers test files anywhere in the tree, the gitignored `spikes/` included.** A spike's test file there runs in
+  the commit hook. Name it so the suite does not find it, and publish it under another name.
+EOF
+node --test test/doc-reference-check.test.mjs 2>&1 | grep -E "^(✖|ℹ (pass|fail))|missing" | head; git add -A docs doc-references.json; git status --short | head -20
+/Users/cjwilliams/GitHub/rigger/tools/coordinator/suite-slot.sh 1462-maker -- caffeinate -dims git commit -F spikes/1462/commit-msg.txt > spikes/1462/commit2.log 2>&1; echo rc=$?; tail -6 spikes/1462/commit2.log; git log -1 --stat --format='%H %an <%ae> | %cn <%ce>%n%B' | tail -30; git status -sb
+
+### 2026-11-24T18:10:20.299Z Bash: run 032, and the amended commit, refused
+cd /Users/cjwilliams/GitHub/rigger-worktrees/1462-spike-engineer/spikes/1462; export SPIKE_RUNS=<archive>/runs; umask 077
+./rec.sh bash -c 'diff <(sed -n "/^== counts/,/^== private/p" "$SPIKE_RUNS/017.txt") <(sed -n "/^== counts/,/^== private/p" "$SPIKE_RUNS/018.txt") && echo "the counts sections are equal"'; tail -6 record.txt
+cd ../..; D=docs/spikes/engine-deaths; { sed '/^### run 001/,$d' $D/command-record.txt; cat spikes/1462/record.txt; } > spikes/1462/cr.txt; cat spikes/1462/cr.txt > $D/command-record.txt
+python3 - <<'EOF'
+p='docs/spikes/engine-deaths.md'; s=open(p).read()
+def rep(a,b):
+    global s
+    assert s.count(a)==1,(s.count(a),a); s=s.replace(a,b)
+rep("Run 018 ran the same command over the extract, and its counts equalled run 017's.","Run 018 ran the same command over the extract, and its counts equalled run 017's (run 032).")
+rep("Runs 016, 017, 019, 024, 025 and 027 to 030 ran once and did not fail. The numbering skips 026, because the recorder counts\nthe files in its output directory and one had been added there by hand.","Runs 016, 017, 019, 024, 025, 027 to 030 and 032 ran once and did not fail. The numbering skips 026 and 031, because the\nrecorder counts the files in its output directory, and one had been added there by hand before each.")
+rep("the runs' outputs\n  and a file of digests.","the runs' outputs,\n  a file of digests and an index of the private items.")
+p2='docs/spikes/engine-deaths/command-record.txt'
+open(p,'w').write(s)
+t=open(p2).read()
+a="Runs 014 to 030 ran the texts"
+assert t.count(a)==1; t=t.replace(a,"Runs 014 to 032 ran the texts")
+a="Run 026 does not exist: the numbering\ncounted a file added to the archive by hand."
+assert t.count(a)==1; t=t.replace(a,"Runs 026 and 031 do not exist: the numbering\ncounted files added to the archive by hand.")
+open(p2,'w').write(t)
+EOF
+sed -n 1,14p $D/command-record.txt; grep -nE "/Users|cjwilliams|[0-9a-f]{64}" -r $D docs/spikes/engine-deaths.md; git add docs; git status --short
+/Users/cjwilliams/GitHub/rigger/tools/coordinator/suite-slot.sh 1462-maker -- caffeinate -dims git commit --amend -F spikes/1462/commit-msg.txt > spikes/1462/commit3.log 2>&1; echo rc=$?; tail -3 spikes/1462/commit3.log; git rev-parse HEAD; git status -sb | head -3
+
+### 2026-11-24T18:31:05.673Z Bash: the amended commit that was made
+cd /Users/cjwilliams/GitHub/rigger-worktrees/1462-spike-engineer; A=<archive>; cp spikes/1462/commit3.log $A/<archive file>; chmod 600 $A/<archive file>; echo "p28 <archive file>" >> $A/index.txt
+python3 - <<'EOF'
+p='docs/spikes/engine-deaths.md'; s=open(p).read()
+def rep(a,b):
+    global s
+    assert s.count(a)==1,(s.count(a),a); s=s.replace(a,b)
+rep("| p27 | 22 |\n","| p27 | 22 |\n| p28 | 22 |\n")
+rep("read event names in code marks as paths | p27 |\n","read event names in code marks as paths | p27 |\n| an unrecorded one | this report's amended commit, refused by one test, L7 in `test/loop.test.mjs`, whose wait of 5 s ran out; M8-U109 ([1293#7112776030](https://github.com/williacj/rigger/issues/1293#issuecomment-7112776030)) names that test as flaky under load, and the change is docs only | p28 |\n")
+open(p,'w').write(s)
+EOF
+git add docs
+/Users/cjwilliams/GitHub/rigger/tools/coordinator/suite-slot.sh 1462-maker -- caffeinate -dims git commit --amend -F spikes/1462/commit-msg.txt > spikes/1462/commit4.log 2>&1; echo rc=$?; grep -E "^ℹ (tests|pass|fail)" spikes/1462/commit4.log; grep -n "^✖" spikes/1462/commit4.log | head -4; git rev-parse HEAD; git status -sb | head -3; uptime | sed 's/.*load/load/'
+
+calls printed: 15, not found: []

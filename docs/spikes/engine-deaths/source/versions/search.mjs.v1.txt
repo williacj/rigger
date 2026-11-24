@@ -1,0 +1,25 @@
+// ABOUTME: Throwaway for #1462: searches the public records, this repository's journal entries at a ref
+// and its saved comments, for sentences that may tell of a death, and prints each with its place.
+
+// Usage: node search.mjs journal <ref> | node search.mjs comments <file> [--since <iso>]
+import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+
+// A process or host that ended, joined in one sentence to what Rigger or a coordinator runs.
+const ENDED = /\b(died|dies|death|dead|crash(?:ed|es)?|kill(?:ed)?(?: outright| -9)|was killed|SIGKILL(?:ed)?|reboot(?:ed|s)?|restarted|power (?:loss|cut|failure)|went to sleep|slept|asleep|woke|out of memory|OOM|jetsam|ran out of battery|lost (?:its )?network|network (?:drop|outage|loss)|interrupted|hung up|terminated|stopped responding)\b/i;
+const WORK = /\b(engine|supervisor|rigger (?:run|once)|`rigger (?:run|once)`|host|laptop|mini|machine|session|maker|judge|reviewer|dispatch|coordinator|agent)\b/i;
+const [source, at, flag, since] = process.argv.slice(2);
+const places = source === 'journal'
+  ? execFileSync('git', ['ls-tree', '-r', '--name-only', at, 'docs/journal'], { encoding: 'utf8' }).trim().split('\n').map((path) => ({ place: path.split('/').at(-1), text: execFileSync('git', ['show', `${at}:${path}`], { encoding: 'utf8', maxBuffer: 1e9 }) }))
+  : readFileSync(at, 'utf8').trim().split('\n').map((line) => JSON.parse(line)).filter((each) => flag === undefined || each.created_at >= since).map(({ id, issue, created_at: when, body }) => ({ place: `${issue}#${id} ${when}`, text: body ?? '' }));
+let found = 0;
+const holding = new Set();
+for (const { place, text } of places) {
+  for (const sentence of text.replace(/\s*\n\s*(?=[a-z(`])/g, ' ').split(/(?<=[.;!?])\s+|\n+/)) {
+    if (!ENDED.test(sentence) || !WORK.test(sentence)) continue;
+    found += 1;
+    holding.add(place);
+    process.stdout.write(`${place}: ${sentence.trim().slice(0, 320)}\n`);
+  }
+}
+process.stdout.write(`places read: ${places.length}\nplaces holding a candidate: ${holding.size}\ncandidate sentences: ${found}\n`);

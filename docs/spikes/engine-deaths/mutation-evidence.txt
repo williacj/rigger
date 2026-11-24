@@ -1,0 +1,188 @@
+ABOUTME: Run 035's output: each edit of count.mjs, what it changed, and each test it failed, by name, place and assertion.
+
+node v26.13.0, count.mjs 779998161aaee6500657f7613ad4ff2624682eab18c1ccaf3021017fcae8d486, tests 6cbe9d10c4665e93eca2042e8b191c43d7c7476db4e0e716d0d8f4eb90cec5f9
+00.txt as it is: parses yes, tests 38, pass 38, fail 0, of which assertion failures 0
+01.txt selector: parses yes, tests 38, pass 37, fail 1, of which assertion failures 1
+    - if (Date.parse(line.slice(at + LINE_START.length).split('"', 1)[0]) > SELECTOR) return true;
+    + if (Date.parse(line.slice(at + LINE_START.length).split('"', 1)[0]) >= SELECTOR) return true;
+    - if (event === undefined ? opensLater(line) : Date.parse(event.ts) > SELECTOR) totals.later += 1;
+    + if (event === undefined ? opensLater(line) : Date.parse(event.ts) >= SELECTOR) totals.later += 1;
+    failing: the selector keeps its own instant, and a later fragment counts as later
+      count.test.mjs:46, ERR_ASSERTION: Expected values to be strictly equal: (expected 0, actual 3)
+02.txt closing stretch ignored: parses yes, tests 38, pass 35, fail 3, of which assertion failures 3
+    - const closing = !released(one) && (end.at >= tails.get(end.run) || end.unread || end.kept);
+    + const closing = !released(one) && (true || end.unread || end.kept);
+    failing: D2: an exit-cleanup end at the run's tail with no release, the maker's earlier end staying completed
+      count.test.mjs:90, ERR_ASSERTION: Expected values to be strictly equal: (expected '1', actual '2')
+    failing: D3: a non-zero exit the engine outlived, in a claim later interrupted, is no D2
+      count.test.mjs:126, ERR_ASSERTION: Expected values to be strictly equal: (expected '1', actual '0')
+    failing: D3 not D2: a fetch.retried, or any event of another layer, after the end shows the engine outlived it
+      count.test.mjs:466, ERR_ASSERTION: fetch.retried (expected '0', actual '1')
+03.txt closing stretch required: parses yes, tests 38, pass 37, fail 1, of which assertion failures 1
+    - const closing = !released(one) && (end.at >= tails.get(end.run) || end.unread || end.kept);
+    + const closing = !released(one) && (end.at >= tails.get(end.run));
+    failing: D2: kept marks one surely wherever it falls, with no release
+      count.test.mjs:476, ERR_ASSERTION: Expected values to be strictly equal: (expected '1', actual '0')
+04.txt closing release ignored: parses yes, tests 38, pass 37, fail 1, of which assertion failures 1
+    - const closing = !released(one) && (end.at >= tails.get(end.run) || end.unread || end.kept);
+    + const closing = (end.at >= tails.get(end.run) || end.unread || end.kept);
+    failing: an unread end whose claim was released fits no ending
+      count.test.mjs:446, ERR_ASSERTION: Expected values to be strictly equal: (expected '0', actual '1')
+05.txt call.end leaves the stretch: parses yes, tests 38, pass 37, fail 1, of which assertion failures 1
+    - const closingEvent = (event) => (event.layer === 'L0' && event.event !== 'fetch.retried')
+    + const closingEvent = (event) => (event.layer === 'L0' && !['call.end', 'fetch.retried'].includes(event.event))
+    failing: D2: the closing stretch may hold a call.end, and such an end is also counted apart
+      count.test.mjs:455, ERR_ASSERTION: Expected values to be strictly equal: (expected '1', actual '0')
+06.txt fetch.retried in the stretch: parses yes, tests 38, pass 37, fail 1, of which assertion failures 1
+    - const closingEvent = (event) => (event.layer === 'L0' && event.event !== 'fetch.retried')
+    + const closingEvent = (event) => (event.layer === 'L0')
+    failing: D3 not D2: a fetch.retried, or any event of another layer, after the end shows the engine outlived it
+      count.test.mjs:466, ERR_ASSERTION: fetch.retried (expected '0', actual '1')
+07.txt beside D1 as D2: parses yes, tests 38, pass 37, fail 1, of which assertion failures 1
+    - else if (closing) one.row = outright.has(one.run) ? 'beside D1' : 'D2';
+    + else if (closing) one.row = 'D2';
+    failing: a run with a dispatch that has no end is D1, and its other closing ends are not D2 but counted apart
+      count.test.mjs:486, ERR_ASSERTION: Expected values to be strictly equal: (expected '0', actual '3')
+08.txt D1 release: parses yes, tests 38, pass 37, fail 1, of which assertion failures 1
+    - if (one.end === undefined) one.row = released(one) || one.claim?.followed ? 'X' : 'D1';
+    + if (one.end === undefined) one.row = false ? 'X' : 'D1';
+    failing: a start with no end whose claim was released is counted apart
+      count.test.mjs:195, ERR_ASSERTION: Expected values to be strictly equal: (expected '0', actual '1')
+09.txt recorded.killed same run: parses yes, tests 38, pass 37, fail 1, of which assertion failures 1
+    - const alive = (one) => (one.killed ?? []).some((event) => event.run !== one.run && event.at > one.start.at);
+    + const alive = (one) => (one.killed ?? []).some((event) => event.at > one.start.at);
+    failing: D1: a recorded.killed in the same run, or of another dispatch, shows nothing
+      count.test.mjs:77, ERR_ASSERTION: Expected values to be strictly equal: (expected '0', actual '1')
+10.txt timeout order: parses yes, tests 38, pass 37, fail 1, of which assertion failures 1
+    - else if (timeout !== undefined) one.row = 'D4';
+    + else if (false) one.row = 'D4';
+    failing: D4: a dispatch.timeout and an end, not D3
+      count.test.mjs:137, ERR_ASSERTION: Expected values to be strictly equal: (expected '1', actual '0')
+11.txt digest gate: parses yes, tests 38, pass 37, fail 1, of which assertion failures 1
+    - if (digest !== passed) refuse('its digest is not the one passed');
+    + if (false) refuse('its digest is not the one passed');
+    failing: the archive run writes the checked lines alone, mode 600, and only for the digest passed
+      count.test.mjs:260, ERR_ASSERTION: Expected values to be strictly equal: (expected 4, actual 0)
+12.txt archive mode: parses yes, tests 38, pass 37, fail 1, of which assertion failures 1
+    - if (held === undefined || !held.isDirectory() || (held.mode & 0o077) !== 0) refuse('the archive is not an owner-only directory');
+    + if (held === undefined || !held.isDirectory() || false) refuse('the archive is not an owner-only directory');
+    failing: the archive must exist and be owner-only
+      count.test.mjs:285, ERR_ASSERTION: Expected values to be strictly equal: (expected 4, actual 0)
+13.txt archive nesting: parses yes, tests 38, pass 37, fail 1, of which assertion failures 1
+    - if (into.startsWith(from) || from.startsWith(into)) refuse('the archive and the source hold one another');
+    + if (false || from.startsWith(into)) refuse('the archive and the source hold one another');
+    failing: an archive inside the source is refused, and so is one holding the source
+      count.test.mjs:383, ERR_ASSERTION: Expected values to be strictly equal: (expected 4, actual 0)
+14.txt archive nesting back: parses yes, tests 38, pass 37, fail 1, of which assertion failures 1
+    - if (into.startsWith(from) || from.startsWith(into)) refuse('the archive and the source hold one another');
+    + if (into.startsWith(from) || false) refuse('the archive and the source hold one another');
+    failing: an archive inside the source is refused, and so is one holding the source
+      count.test.mjs:383, ERR_ASSERTION: Expected values to be strictly equal: (expected 4, actual 0)
+15.txt no recheck: parses yes, tests 38, pass 37, fail 1, of which assertion failures 1
+    - if (changed !== undefined) refuse(changed);
+    + if (false) refuse(changed);
+    failing: a source that changes between the read and the archive write leaves nothing in the archive
+      count.test.mjs:360, ERR_ASSERTION: later: == reading (expected 4, actual 0)
+16.txt recheck ignores window: parses yes, tests 38, pass 37, fail 1, of which assertion failures 1
+    - return after.window === source.window && after.totals.later === 0 ? undefined : `the source changed while the command ran, with ${after.totals.later} later`;
+    + return after.totals.later === 0 ? undefined : `the source changed while the command ran, with ${after.totals.later} later`;
+    failing: a source that changes between the read and the archive write leaves nothing in the archive
+      count.test.mjs:360, ERR_ASSERTION: earlier: == reading (expected 4, actual 0)
+17.txt recheck ignores later: parses yes, tests 38, pass 37, fail 1, of which assertion failures 1
+    - return after.window === source.window && after.totals.later === 0 ? undefined : `the source changed while the command ran, with ${after.totals.later} later`;
+    + return after.window === source.window ? undefined : `the source changed while the command ran, with ${after.totals.later} later`;
+    failing: a source that changes between the read and the archive write leaves nothing in the archive
+      count.test.mjs:360, ERR_ASSERTION: later: == reading (expected 4, actual 0)
+18.txt read back unchecked: parses yes, tests 38, pass 37, fail 1, of which assertion failures 1
+    - if (sha(back) !== digest || (statSync(partial).mode & 0o777) !== 0o600) refuse('what was read back differs');
+    + if ((statSync(partial).mode & 0o777) !== 0o600) refuse('what was read back differs');
+    failing: a source that changes between the read and the archive write leaves nothing in the archive
+      count.test.mjs:360, ERR_ASSERTION: spoilt: == reading (expected 4, actual 0)
+19.txt temporary kept: parses yes, tests 38, pass 35, fail 3, of which assertion failures 3
+    - unlinkSync(partial);
+    + 
+    failing: the archive run writes the checked lines alone, mode 600, and only for the digest passed
+      count.test.mjs:265, ERR_ASSERTION: Expected values to be strictly deep-equal:
+    failing: a source that changes between the read and the archive write leaves nothing in the archive
+      count.test.mjs:361, ERR_ASSERTION: later
+    failing: an extract made while another appeared is not written over it, and no temporary file stays
+      count.test.mjs:373, ERR_ASSERTION: Expected values to be strictly deep-equal:
+20.txt overwrite: parses yes, tests 38, pass 36, fail 2, of which assertion failures 2
+    - linkSync(partial, join(archive, STREAM));
+    + writeFileSync(join(archive, STREAM), body);
+    failing: the archive run writes the checked lines alone, mode 600, and only for the digest passed
+      count.test.mjs:272, ERR_ASSERTION: never overwrites (expected 4, actual 0)
+    failing: an extract made while another appeared is not written over it, and no temporary file stays
+      count.test.mjs:372, ERR_ASSERTION: Expected values to be strictly equal: (expected 4, actual 0)
+21.txt marks leak: parses yes, tests 38, pass 37, fail 1, of which assertion failures 1
+    - for (const mark of MARKS) out[mark] = Object.hasOwn(event, mark) && event[mark] !== false;
+    + for (const mark of MARKS) out[mark] = event[mark];
+    failing: the extract holds the listed fields alone, marks for the text ones, and nothing of a value out of shape
+      count.test.mjs:242, ERR_ASSERTION: The input was expected to not match the regular expression /secret|private|free text/. Input:
+22.txt shape unchecked: parses yes, tests 38, pass 36, fail 2, of which assertion failures 2
+    - if (shape(event[field])) out[field] = event[field];
+    + if (true) out[field] = event[field];
+    failing: the extract holds the listed fields alone, marks for the text ones, and nothing of a value out of shape
+      count.test.mjs:242, ERR_ASSERTION: The input was expected to not match the regular expression /secret|private|free text/. Input:
+    failing: a run or event out of shape becomes one fixed placeholder, and the extract filters to itself
+      count.test.mjs:424, ERR_ASSERTION: Expected values to be strictly deep-equal:
+23.txt fragment later: parses yes, tests 38, pass 37, fail 1, of which assertion failures 1
+    - if (event === undefined ? opensLater(line) : Date.parse(event.ts) > SELECTOR) totals.later += 1;
+    + if (event === undefined ? false : Date.parse(event.ts) > SELECTOR) totals.later += 1;
+    failing: the selector keeps its own instant, and a later fragment counts as later
+      count.test.mjs:217, ERR_ASSERTION: Expected values to be strictly equal: (expected |-, actual |-)
+24.txt top alone: parses yes, tests 38, pass 34, fail 4, of which assertion failures 4
+    - if (entry.isDirectory()) walk(join(at, entry.name));
+    + if (false);
+    failing: every regular events.jsonl under the directory is read, no link is followed, and others are counted alone
+      count.test.mjs:305, ERR_ASSERTION: the source could not be read: it holds no events.jsonl (expected 0, actual 2)
+    failing: a stream copied under the same name shows as repeated lines, and a later event in any stream stops all
+      count.test.mjs:319, ERR_ASSERTION: Expected values to be strictly equal: (expected '1', actual '0')
+    failing: no stream, a directory that is a link, or one that cannot be listed is refused, naming no path
+      count.test.mjs:332, ERR_ASSERTION: Expected values to be strictly equal: (expected 2, actual 0)
+    failing: a source that changes between the read and the archive write leaves nothing in the archive
+      count.test.mjs:360, ERR_ASSERTION: rotated: == reading (expected 4, actual 0)
+25.txt links followed: parses yes, tests 38, pass 37, fail 1, of which assertion failures 1
+    - const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+    + const fd = openSync(path, constants.O_RDONLY);
+    - else if (entry.isFile() && entry.name === STREAM) found.paths.push(join(at, entry.name));
+    + else if (entry.name === STREAM) found.paths.push(join(at, entry.name));
+    failing: every regular events.jsonl under the directory is read, no link is followed, and others are counted alone
+      count.test.mjs:306, ERR_ASSERTION: Expected values to be strictly equal: (expected '2', actual '3')
+26.txt linked directory given: parses yes, tests 38, pass 37, fail 1, of which assertion failures 1
+    - if (!lstatSync(directory.replace(/\/+$/, '') || '/').isDirectory()) throw Object.assign(new Error(), { code: 'not a directory, or a link to one' });
+    + if (!statSync(directory.replace(/\/+$/, '') || '/').isDirectory()) throw Object.assign(new Error(), { code: 'not a directory, or a link to one' });
+    failing: no stream, a directory that is a link, or one that cannot be listed is refused, naming no path
+      count.test.mjs:332, ERR_ASSERTION: Expected values to be strictly equal: (expected 2, actual 0)
+27.txt others by jsonl: parses yes, tests 38, pass 37, fail 1, of which assertion failures 1
+    - else if (entry.name.startsWith('events')) found.others += 1;
+    + else if (entry.name.endsWith('.jsonl')) found.others += 1;
+    failing: every regular events.jsonl under the directory is read, no link is followed, and others are counted alone
+      count.test.mjs:308, ERR_ASSERTION: Expected values to be strictly equal: (expected '4', actual '3')
+28.txt streams by path: parses yes, tests 38, pass 37, fail 1, of which assertion failures 1
+    - const streams = paths.map((path) => readLines(bytesOf(path))).sort((one, two) => (one.events[0]?.ts ?? '').localeCompare(two.events[0]?.ts ?? ''));
+    + const streams = paths.map((path) => readLines(bytesOf(path))).sort((one, two) => 0);
+    failing: every regular events.jsonl under the directory is read, no link is followed, and others are counted alone
+      count.test.mjs:312, ERR_ASSERTION: Expected values to be strictly deep-equal:
+29.txt repeated lines: parses yes, tests 38, pass 37, fail 1, of which assertion failures 1
+    - totals.repeated = [...seen.values()].filter((holding) => holding.size > 1).length;
+    + totals.repeated = [...seen.values()].filter((holding) => holding.size > 2).length;
+    failing: a stream copied under the same name shows as repeated lines, and a later event in any stream stops all
+      count.test.mjs:319, ERR_ASSERTION: Expected values to be strictly equal: (expected '1', actual '0')
+30.txt merge claims: parses yes, tests 38, pass 37, fail 1, of which assertion failures 1
+    - const work = claims.filter((claim) => !claim.merging);
+    + const work = claims;
+    failing: redos, interruptions, work claims and host faults match report's definitions
+      count.test.mjs:182, ERR_ASSERTION: Expected values to be strictly equal: (expected '2', actual '3')
+31.txt redo released: parses yes, tests 38, pass 37, fail 1, of which assertion failures 1
+    - if (earlier && earlier.run !== claim.run && !earlier.released) { redos.push(claim); earlier.redo = claim; }
+    + if (earlier && earlier.run !== claim.run) { redos.push(claim); earlier.redo = claim; }
+    failing: a claim after a released one in another run is no redo
+      count.test.mjs:509, ERR_ASSERTION: Expected values to be strictly equal: (expected '2', actual '1')
+32.txt redo same run: parses yes, tests 38, pass 37, fail 1, of which assertion failures 1
+    - if (earlier && earlier.run !== claim.run && !earlier.released) { redos.push(claim); earlier.redo = claim; }
+    + if (earlier && !earlier.released) { redos.push(claim); earlier.redo = claim; }
+    failing: a later claim in the same run is no redo
+      count.test.mjs:501, ERR_ASSERTION: Expected values to be strictly equal: (expected '2', actual '1')
+33.txt restored: parses yes, tests 38, pass 38, fail 0, of which assertion failures 0
+edits: 32, survived: 0
