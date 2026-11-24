@@ -790,7 +790,8 @@ Each failure is one of three classes:
 | a judge's dispatch that never started because a directory made for it was gone or unreadable when it started | host | always | in |
 | a judge's dispatch that never started because its working directory was replaced, so that its real path lies outside the judge's directory | host | always | in |
 | a judge's dispatch that never started because another dispatch's entry in Rigger's record of process groups held the judge's directory | host | always | in |
-| Rigger's record of process groups that cannot be read, or that holds no list of entries Rigger can read, when a judge's dispatch is about to start | host | always | in |
+| Rigger's record of process groups that cannot be read, or that holds no list of entries Rigger can read, when a judge's dispatch is about to start | out | — | out: a sign under `R-STATE-33`, so `R-STATE-39` holds |
+| a dispatch that never started because a sign under `R-STATE-30` stood, whatever its role or card | out | — | out: `R-STATE-39`; this row governs over any other row that names the same dispatch |
 | Claude Code settings on the main line holding a permission rule Rigger cannot read as text, for a judge on Claude Code | host | always | in |
 | the owner's home directory that cannot be found, for a judge on Codex where `CODEX_HOME` is not set | host | always | in |
 | a configuration naming, as a judge's agent file, a value that is no string | host | always | in |
