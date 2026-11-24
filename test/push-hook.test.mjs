@@ -279,7 +279,7 @@ const ADDRESS = ['ana', 'post.zone'].join('@');
 
 // D29 reason: wiring; the rows' decisions are proved in test/push-content.test.mjs.
 test('each row refuses a real push, in every encoding it reads, whatever the attributes say', () => {
-  for (const [row, line] of [['C1', SID], ['C2', ADDRESS], ['C2', ['noreply', 'post.zone', 'other.zone'].join('@')], ['C3', HEADER], ['C5', ENTRY], ['C5', `\u03bc\u03bf${'\u03c3'.repeat(2)}`]]) {
+  for (const [row, line] of [['C1', SID], ['C2', ADDRESS], ['C2', ['noreply', 'post.zone', 'other.zone'].join('@')], ['C3', HEADER], ['C5', ENTRY]]) {
     for (const bytes of [Buffer.from(`${line}\n`), Buffer.from(`${line}\n`, 'utf16le'), utf16be(`${line}\n`)]) {
       const f = listed();
       f.commit({ '.gitattributes': '* binary -diff\n', 'data.bin': bytes });
@@ -295,6 +295,7 @@ test('each row refuses a real push, in every encoding it reads, whatever the att
 test('a list entry is refused in every place a push publishes', () => {
   const places = {
     'a path': [(f) => f.commit({ [`${ENTRY}/x.txt`]: 'x\n' }), /, a path\./],
+    'a line in another case': [(f) => f.commit({ 'x.txt': `\u03bc\u03bf${'\u03c3'.repeat(2)}\n` }), /"x\.txt" line 1/],
     'a path in another case': [(f) => f.commit({ [`docs/${SIGMA}.txt`]: 'x\n' }), /, a path\./],
     'a link target': [(f) => { symlinkSync(ENTRY, join(f.clone, 'link')); f.commit({}); }, /its link target/],
     'a message': [(f) => f.commit({ x: 'x\n' }, `about ${ENTRY}`), /its message/],
