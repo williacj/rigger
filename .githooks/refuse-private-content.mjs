@@ -201,12 +201,15 @@ const ROWS = {
 };
 
 /** The first wording, and so the fullest, that holds no entry of the list. */
-const wording = (entries, ...wordings) => wordings.find((text) => !entries.some((entry) => folded(text).includes(entry.text))) ?? '';
+const wording = (entries, ...wordings) => wordings.find((text) => !entries.some((entry) => folded(text).includes(entry.text)));
+
+/** The row and the place on lines of at most three characters, which no entry of four can be in. */
+const shortest = (row, ordinal) => [row, '#', ...String(ordinal).match(/.{1,3}/g)].join('\n');
 
 /** One refusal: its row and its place, in the fullest words that hold no entry of the list. */
 export const refusalLine = (row, place, ordinal, entries) => wording(
   entries, `refused: ${row}, ${ROWS[row]}: ${place}.`, `refused: ${row}: ${place}.`, `refused: ${row} #${ordinal}.`, `${row} #${ordinal}`,
-);
+) ?? shortest(row, ordinal);
 
 /** The updates a push asks for, its deletions left out, from what git hands the hook. */
 export function updatesIn(text) {
@@ -362,7 +365,7 @@ function refusals(defaultRef) {
     return [...distinct.values()].map(({ row, place }, index) => refusalLine(row, place, index + 1, entries));
   } catch (error) {
     const reason = error instanceof Unchecked ? error.message : 'the check failed';
-    return [wording(entries, `refused: the push could not be checked: ${reason}.`, 'refused.')];
+    return [wording(entries, `refused: the push could not be checked: ${reason}.`, 'refused.') ?? 'no'];
   }
 }
 
