@@ -135,6 +135,9 @@ until CI supplies evidence. These checks do not replace the review and merge gat
 - **End only recorded processes.** A session may end a process by a command it runs only if it,
   or the tool that started the process, recorded its pid at start. A process it did not start
   goes to the owner. This binds commands a session runs, not code it writes.
+- **Never publish private content from a personal machine** (`docs/host-bootstrap.md`, "Spikes
+  on a personal machine", "Terms"; "the spike" means your work). A spike card that uses one
+  adopts that section.
 
 ## When you write code
 
