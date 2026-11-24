@@ -46,6 +46,7 @@
     "docs/guide.md": "strict",
     "docs/reference.md": "strict",
     "docs/spikes/review-workspace-custody.md": "strict",
+    "docs/spikes/non-elevated-job-object.md": "strict",
     "docs/spikes/whole-tree-without-a-session.md": "strict"
   },
   "exempt": {
