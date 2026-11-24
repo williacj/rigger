@@ -1,0 +1,2 @@
+ABOUTME: Card #1458, run n1: rec-cj.jsonl as written on finnpc by the launcher (as cj); every line after this one is that file byte for byte (sha256 4561fa987abf37f6d345a9033b26a0a08585f63fdf4a9f78757f1d5da1cfffd8).
+{"host":"finnpc","pid":24664,"created":"2026-11-22T03:03:34.4795780Z","createdFt":"134397902144795780","how":"self","what":"launcher","recorded":"2026-11-22T03:03:34.510Z","by":24664}

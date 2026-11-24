@@ -39,11 +39,13 @@ function taken(speed, timeout) {
  *
  * - `speed`: how far into its timeout each of this group's reads answers: `last`, one millisecond
  *   short of it; `half` or `tenth` of it; or a number of milliseconds. Five milliseconds if unset.
- * - `outlives`: which of `member` and `survivors` the kill does not end.
+ * - `outlives`: which of `member`, `survivors` and `tracked` the kill does not end.
+ * - `tracked`: an escaped child whose parent belongs to the dispatch group.
+ * - `noScratch`: both directory survivors work in the workspace.
  * - `silent`: that the read just before the kill lists nothing, though signal 0 reaches the group.
  * - `hung`: that `ps` never answers once a read of this group is made: each read takes its timeout.
  * - `spent`: where the clock stands, from the cleanup's start, once the listing of this group's
- *   scratch directory, its last read where it has no survivors, has answered. Time can pass between
+ *   directories that ends the group’s exit sweep has answered. Time can pass between
  *   reads, so the jump is the host's and not a read's.
  * - `emptied`: that the group is gone by the exit, its command reaped with the exit code 3.
  * - `contained`: that the call has emptied the group and is reading its output as the exit comes.
@@ -58,6 +60,7 @@ export function budgetWorld(directory, plan, sink) {
   let exiting = false;
   let began;
   let current;
+  let finalReads = 0;
   const groups = new Map((plan.groups ?? []).map((group) => [groupOf(group.label), group]));
   const table = new Map();
   const signals = [];
@@ -68,15 +71,16 @@ export function budgetWorld(directory, plan, sink) {
   const started = new Map();
   // Under a hung table a read L0 gives up on at once moves no stand-in clock, and L0 retries on the
   // clock's word, so each look at the clock costs a millisecond there, as it costs some on a real host.
-  const clock = { now: () => (exiting && groups.get(current)?.hung ? ++now : now), pause: async () => {}, schedule: (done, delay) => { schedules.push(delay); return {}; }, cancel: () => {} };
+  const clock = { now: () => (exiting && groups.get(current)?.hung ? ++now : now), pause: async () => {}, schedule: (done, delay) => { if (!done.tracker) schedules.push(delay); return {}; }, cancel: () => {} };
 
   const add = (pid, group, name, cwd, outlives) => table.set(pid, { pid, group, name, cwd, outlives, state: 'S', xstat: '0' });
-  for (const [group, { label, survivors, outlives = [] }] of groups) {
+  for (const [group, { label, survivors, tracked, noScratch, outlives = [] }] of groups) {
     add(group, group, 'stand-in', undefined, false);
     add(group + 1, group, 'stand-in', undefined, outlives.includes('member'));
+    if (tracked) add(group + 4, group + 4, 'tracked', undefined, outlives.includes('tracked'));
     if (!survivors) continue;
     add(group + 2, 0, 'left', within('work', label), outlives.includes('survivors'));
-    add(group + 3, 0, 'left', within('scratch', label), outlives.includes('survivors'));
+    add(group + 3, 0, 'left', within(noScratch ? 'work' : 'scratch', label), outlives.includes('survivors'));
   }
 
   function signal(target, name) {
@@ -101,6 +105,11 @@ export function budgetWorld(directory, plan, sink) {
         .flatMap((each) => [`p${each.pid}`, `u${realHost.uid()}`, `n${each.cwd}`]);
       return lines.length === 0 ? { status: 1, stdout: '', stderr: '' } : { status: 0, stdout: `${lines.join('\n')}\n`, stderr: '' };
     }
+    if (args.includes('-A')) {
+      // ps(1)'s whole-table columns, also captured in #1293's 7073488047 native probe.
+      if (exiting) current = [...groups.keys()][finalReads++];
+      return { status: 0, stdout: [...table.values()].map((each) => `${each.pid} ${each.name === 'tracked' ? each.pid - 3 : 1} ${each.group} Thu Oct 29 12:00:00 2026`).join('\n') + '\n', stderr: '' };
+    }
     const at = args.indexOf('-g');
     const group = at === -1 ? undefined : Number(args[at + 1]);
     const columns = args.at(-1);
@@ -109,6 +118,7 @@ export function budgetWorld(directory, plan, sink) {
     const rows = [...table.values()].filter((each) => (group === undefined ? pids.includes(each.pid) : each.group === group)).map((each) => ({
       'ucomm=': each.name,
       'lstart=': 'Thu Oct 29 12:00:00 2026',
+      'pid=,lstart=': `${each.pid} Thu Oct 29 12:00:00 2026`,
       'pid=,stat=': `${each.pid} ${each.state}`,
       'pid=,stat=,xstat=': `${each.pid} ${each.state} ${each.xstat}`,
       'pid=,stat=,lstart=': `${each.pid} ${each.state} Thu Oct 29 12:00:00 2026`,
@@ -118,6 +128,7 @@ export function budgetWorld(directory, plan, sink) {
   }
 
   function spawnSync(tool, args, { timeout }) {
+    const at = now - began;
     const printed = answer(tool, args);
     if (!exiting) return printed;
     const plain = tool === realHost.lsof ? 'lsof' : 'ps';
@@ -128,10 +139,10 @@ export function budgetWorld(directory, plan, sink) {
       return { status: null, signal: 'SIGKILL', stdout: '', stderr: '', error: Object.assign(new Error('spawnSync ETIMEDOUT'), { code: 'ETIMEDOUT' }) };
     }
     now += taken(speed, timeout);
-    reads.push({ tool: plain, args, group: current });
+    reads.push({ tool: plain, args, group: current, at });
     if (plain === 'lsof' && spent !== undefined) {
       listings.set(current, (listings.get(current) ?? 0) + 1);
-      if (listings.get(current) === 2) now = began + spent;
+      if (listings.get(current) === 1) now = began + spent;
     }
     return printed;
   }
@@ -154,7 +165,7 @@ export function budgetWorld(directory, plan, sink) {
   /** Starts the dispatch labelled `label` on `on`, by default this world's host. */
   const start = (label, { command = '/usr/bin/true', on = host } = {}) => dispatch({
     id: `d-${label}`, card: label, directory: state, sink, command, args: [String(label)], env: {}, timeout: 600_000, host: on, clock: () => 0,
-    cwd: within('work', label), workspace: within('work', label), scratch: within('scratch', label),
+    cwd: within('work', label), workspace: within('work', label), ...(groups.get(groupOf(label))?.noScratch ? {} : { scratch: within('scratch', label) }),
   });
 
   /** Empties `group` of the table, so that signal 0 no longer reaches it. */
@@ -308,15 +319,19 @@ export const BUDGET = {
   lastMoment(run, diagnostic) {
     const longest = [];
     for (const speed of ['last', 'half', 'tenth']) {
-      for (const outlives of [['member'], ['member', 'survivors']]) {
+      for (const outlives of [['member'], ['member', 'survivors', 'tracked']]) {
         for (const silent of [false, true]) {
-          const ran = run({ groups: [{ label: 1, speed, outlives, silent, survivors: true }] });
+          const ran = run({ groups: [{ label: 1, speed, outlives, silent, survivors: true, tracked: true }] });
           const shown = JSON.stringify({ speed, outlives, silent, elapsed: ran.elapsed });
           diagnostic(shown);
           assert.ok(ran.elapsed <= EXIT_BOUND - EXIT_CARE_BOUND, shown);
           assertAllEnded(ran, [1]);
           assertCareful(ran, 1);
           assert.ok(ran.events.some(({ event, pid }) => event === 'survivor.unended' && pid === 1_001), `the member the kill does not end is not recorded as not ended: ${shown}`);
+          if (speed === 'half' && outlives.includes('tracked')) {
+            const firstGroupRead = ran.reads.find(({ args }) => args?.includes('-g'));
+            assert.ok(firstGroupRead.at >= READ_TIMEOUT, `the tracker spent only ${firstGroupRead.at} ms at exit`);
+          }
           longest.push(ran.elapsed);
         }
       }
@@ -325,3 +340,11 @@ export const BUDGET = {
     assert.ok(Math.max(...longest) > EXIT_CARE_BOUND + READ_TIMEOUT, `the longest took ${Math.max(...longest)} ms`);
   },
 };
+
+/** T15 compares one shared directory sweep with the same survivors in just the workspace. */
+export function assertSweepTogether(two, one) {
+  const listings = (ran) => ran.reads.filter(({ tool }) => tool === 'lsof');
+  assert.ok(listings(two)[0].at >= EXIT_CARE_BOUND, 'the care bound had not passed before the first directory read');
+  assert.ok(listings(two).length <= listings(one).length, `two directories took ${listings(two).length} lsof reads; one took ${listings(one).length}`);
+  assertAllEnded(two, [1]);
+}

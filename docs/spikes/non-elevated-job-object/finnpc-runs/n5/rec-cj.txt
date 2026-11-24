@@ -1,0 +1,11 @@
+ABOUTME: Card #1458, run n5: rec-cj.jsonl as written on finnpc by the launcher (as cj); every line after this one is that file byte for byte (sha256 414c35157108e0bb1a76eb40f0db343c0e685d6d0c84d7b7412b877af014b807).
+{"host":"finnpc","pid":8860,"created":"2026-11-22T03:05:51.7026673Z","createdFt":"134397903517026673","how":"self","what":"launcher","recorded":"2026-11-22T03:05:51.737Z","by":8860}
+{"host":"finnpc","pid":14732,"created":"2026-11-22T03:05:51.7514853Z","createdFt":"134397903517514853","how":"CreateProcessWithLogonW","what":"\"C:\\Program Files\\nodejs\\node.exe\" \"C:\\Users\\cj\\1458-spike-engineer\\supervisor.cjs\" e2 n5 \"C:\\Users\\cj\\1458-spike-engineer\\runs\\n5\"","recorded":"2026-11-22T03:05:51.751Z","by":8860}
+{"host":"finnpc","pid":32676,"created":"2026-11-22T03:05:51.7534512Z","createdFt":"134397903517534512","how":"tracker","what":"conhost.exe (ppid 14732)","recorded":"2026-11-22T03:05:51.766Z","by":8860}
+{"host":"finnpc","pid":19128,"created":"2026-11-22T03:05:51.8015838Z","createdFt":"134397903518015838","how":"tracker","what":"node.exe (ppid 14732)","recorded":"2026-11-22T03:05:51.879Z","by":8860}
+{"host":"finnpc","pid":37680,"created":"2026-11-22T03:05:51.8354545Z","createdFt":"134397903518354545","how":"tracker","what":"node.exe (ppid 19128)","recorded":"2026-11-22T03:05:51.879Z","by":8860}
+{"host":"finnpc","pid":37412,"created":"2026-11-22T03:05:51.8373455Z","createdFt":"134397903518373455","how":"tracker","what":"conhost.exe (ppid 37680)","recorded":"2026-11-22T03:05:51.880Z","by":8860}
+{"host":"finnpc","pid":28236,"created":"2026-11-22T03:05:51.8373978Z","createdFt":"134397903518373978","how":"tracker","what":"node.exe (ppid 19128)","recorded":"2026-11-22T03:05:51.880Z","by":8860}
+{"host":"finnpc","pid":25684,"created":"2026-11-22T03:05:51.8405659Z","createdFt":"134397903518405659","how":"tracker","what":"node.exe (ppid 19128)","recorded":"2026-11-22T03:05:51.880Z","by":8860}
+{"host":"finnpc","pid":37840,"created":"2026-11-22T03:05:51.8540513Z","createdFt":"134397903518540513","how":"tracker","what":"node.exe (ppid 38808)","recorded":"2026-11-22T03:05:51.880Z","by":8860}
+{"host":"finnpc","pid":30336,"created":"2026-11-22T03:05:51.8776552Z","createdFt":"134397903518776552","how":"tracker","what":"node.exe (ppid 37680)","recorded":"2026-11-22T03:05:51.880Z","by":8860}

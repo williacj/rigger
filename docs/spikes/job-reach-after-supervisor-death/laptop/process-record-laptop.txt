@@ -1,0 +1,8 @@
+ABOUTME: Card #1460 laptop process record: the launching shell of each commit on the rewritten branch, recorded at its start.
+{"host":"laptop","pid":52394,"created":"Sun Nov 22 20:57:12 2026","recordedAt":"2026-11-23T02:57:12Z","role":"commit launcher, then suite-slot.sh by exec"}
+{"host":"laptop","pid":98479,"created":"Mon Nov 23 10:23:19 2026","recordedAt":"2026-11-23T16:23:20Z","role":"commit launcher, then suite-slot.sh by exec"}
+{"host":"laptop","pid":63540,"created":"Mon Nov 23 14:49:05 2026","recordedAt":"2026-11-23T20:49:06Z","role":"commit launcher, then suite-slot.sh by exec"}
+{"host":"laptop","pid":71039,"created":"Mon Nov 23 16:23:48 2026","recordedAt":"2026-11-23T22:23:48Z","role":"commit launcher, then suite-slot.sh by exec"}
+{"host":"laptop","pid":80754,"created":"Mon Nov 23 18:16:36 2026","recordedAt":"2026-11-24T00:16:36Z","role":"commit launcher, then suite-slot.sh by exec"}
+{"host":"laptop","pid":32265,"created":"Mon Nov 23 18:25:58 2026","recordedAt":"2026-11-24T00:25:58Z","role":"commit launcher, then suite-slot.sh by exec"}
+{"host":"laptop","pid":67748,"created":"Mon Nov 23 18:38:16 2026","recordedAt":"2026-11-24T00:38:17Z","role":"commit launcher, then suite-slot.sh by exec"}
