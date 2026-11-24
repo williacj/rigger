@@ -1,0 +1,22 @@
+ABOUTME: Card #1458, run n5: sup.log as written on hostpc by the supervisor (as fx1458), its log; every line after the MASKED EDIT line is that file, byte for byte apart from one masked SID; the file itself is identified by its digest (sha256 d596a10858e030f7d63f3c504a4826a5e746deeb51495ff279b20e7026c073d6).
+[MASKED EDIT: one account's SID is replaced by "[SID withheld]", under the owner's ruling 1458#7090273806. The committed file before the masking had sha256 106070ed05413e518ed233d1331ce596bddb575d174f89829946c59128661fd2.]
+2026-11-22T03:05:51.796Z supervisor pid 14732 ppid 8860 mode e2 run n5 session 0 created 2026-11-22T03:05:51.7514853Z
+2026-11-22T03:05:51.797Z versions: node v24.19.0 x64 | os.release() 10.0.26300 | koffi 3.3.8 (C:\Users\user\1458-spike-engineer\node_modules\koffi\package.json) | @koromix/koffi-win32-x64 3.3.8 (C:\Users\user\1458-spike-engineer\node_modules\@koromix\koffi-win32-x64\package.json) | koffi.version 3.3.8
+2026-11-22T03:05:51.798Z own token (OpenProcessToken(GetCurrentProcess()) + GetTokenInformation): user HOST-PC10\fx1458 ([SID withheld]) | TokenIntegrityLevel Mandatory Label\Medium Mandatory Level (S-1-16-8192, RID 0x2000) | TokenElevationType 1 (TokenElevationTypeDefault) | TokenIsElevated=0
+2026-11-22T03:05:51.798Z IsProcessInJob(GetCurrentProcess(), NULL) before creating a job: returned 1, Result=TRUE (already in a job)
+2026-11-22T03:05:51.799Z CreateJobObjectW(NULL, NULL): returned a handle (non-NULL), GetLastError=0
+2026-11-22T03:05:51.799Z SetInformationJobObject(job, JobObjectExtendedLimitInformation, KILL_ON_JOB_CLOSE): returned 1, GetLastError=0
+2026-11-22T03:05:51.799Z job limits read back (QueryInformationJobObject(JobObjectExtendedLimitInformation)): LimitFlags=0x2000 KILL_ON_JOB_CLOSE=set
+2026-11-22T03:05:51.802Z fixture root pid 19128: AssignProcessToJobObject(job, root): returned 1, GetLastError=0
+2026-11-22T03:05:56.950Z job process id list (JobObjectBasicProcessIdList): [37412,28236,37948,25684,37840,19128,37680,30336] accounting: {"total":9,"active":8,"terminated":0}
+2026-11-22T03:05:56.966Z BEFORE ENDING, with membership
+listing run=n5 before ending at 2026-11-22T03:05:56.966Z on Windows by pid 14732 (Toolhelp snapshot + PEB command line and CurrentDirectory + GetProcessTimes + IsProcessInJob)
+PID     PPID    CREATED (UTC, GetProcessTimes)    IN_SPIKE_JOB IN_ANY_JOB CWD | ROLE
+19128   14732   2026-11-22T03:05:51.8015838Z      yes          yes        C:\Users\user\1458-spike-engineer\runs\n5\d\ | root
+37680   19128   2026-11-22T03:05:51.8354545Z      yes          yes        C:\Users\user\1458-spike-engineer\runs\n5\d\ | M1
+28236   19128   2026-11-22T03:05:51.8373978Z      yes          yes        C:\Users\user\1458-spike-engineer\runs\n5\d\ | M3
+25684   19128   2026-11-22T03:05:51.8405659Z      yes          yes        C:\ | M6
+37840   38808   2026-11-22T03:05:51.8540513Z      yes          yes        C:\Users\USER\1458-spike-engineer\runs\n5\d\ | M4
+30336   37680   2026-11-22T03:05:51.8776552Z      yes          yes        C:\Users\user\1458-spike-engineer\runs\n5\d\ | M2
+count=6
+2026-11-22T03:05:56.967Z waiting to be killed outright

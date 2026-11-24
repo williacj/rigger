@@ -1,0 +1,11 @@
+ABOUTME: Card #1458, run n4: rec-user.jsonl as written on hostpc by the launcher (as user); every line after this one is that file byte for byte (sha256 911242075a3bbd6bce8e2753afcc02dc8cf8a832c857e8a8ab00a518641b5f86).
+{"host":"hostpc","pid":18024,"created":"2026-11-22T03:05:25.6164122Z","createdFt":"134397903256164122","how":"self","what":"launcher","recorded":"2026-11-22T03:05:25.650Z","by":18024}
+{"host":"hostpc","pid":7356,"created":"2026-11-22T03:05:25.6637473Z","createdFt":"134397903256637473","how":"CreateProcessWithLogonW","what":"\"C:\\Program Files\\nodejs\\node.exe\" \"C:\\Users\\user\\1458-spike-engineer\\supervisor.cjs\" e1 n4 \"C:\\Users\\user\\1458-spike-engineer\\runs\\n4\"","recorded":"2026-11-22T03:05:25.664Z","by":18024}
+{"host":"hostpc","pid":28328,"created":"2026-11-22T03:05:25.6657337Z","createdFt":"134397903256657337","how":"tracker","what":"conhost.exe (ppid 7356)","recorded":"2026-11-22T03:05:25.677Z","by":18024}
+{"host":"hostpc","pid":32832,"created":"2026-11-22T03:05:25.7109749Z","createdFt":"134397903257109749","how":"tracker","what":"node.exe (ppid 7356)","recorded":"2026-11-22T03:05:25.785Z","by":18024}
+{"host":"hostpc","pid":14124,"created":"2026-11-22T03:05:25.7451597Z","createdFt":"134397903257451597","how":"tracker","what":"node.exe (ppid 32832)","recorded":"2026-11-22T03:05:25.785Z","by":18024}
+{"host":"hostpc","pid":5780,"created":"2026-11-22T03:05:25.7470067Z","createdFt":"134397903257470067","how":"tracker","what":"conhost.exe (ppid 14124)","recorded":"2026-11-22T03:05:25.785Z","by":18024}
+{"host":"hostpc","pid":36636,"created":"2026-11-22T03:05:25.7470854Z","createdFt":"134397903257470854","how":"tracker","what":"node.exe (ppid 32832)","recorded":"2026-11-22T03:05:25.785Z","by":18024}
+{"host":"hostpc","pid":13452,"created":"2026-11-22T03:05:25.7508473Z","createdFt":"134397903257508473","how":"tracker","what":"node.exe (ppid 32832)","recorded":"2026-11-22T03:05:25.786Z","by":18024}
+{"host":"hostpc","pid":37188,"created":"2026-11-22T03:05:25.7640886Z","createdFt":"134397903257640886","how":"tracker","what":"node.exe (ppid 29140)","recorded":"2026-11-22T03:05:25.786Z","by":18024}
+{"host":"hostpc","pid":38476,"created":"2026-11-22T03:05:25.7884011Z","createdFt":"134397903257884011","how":"tracker","what":"node.exe (ppid 14124)","recorded":"2026-11-22T03:05:25.905Z","by":18024}
