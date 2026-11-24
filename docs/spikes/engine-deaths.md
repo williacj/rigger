@@ -38,19 +38,24 @@ This report hands over evidence. It records no decision and changes no code, req
    directory of Rigger's Emend engine. It kept only the card's listed fields, and only events at or before
    2026-11-24T15:35:09Z.
 2. rigger-ae posted that rigger-d1's terms were given
-   ([1462#7139235069](https://github.com/williacj/rigger/issues/1462#issuecomment-7139235069)), before the first read.
+   ([1462#7139235069](https://github.com/williacj/rigger/issues/1462#issuecomment-7139235069)), before the first read (created 17:27:56Z, run 040).
 3. The privacy checker read the command, checked every filtered line, and passed it
-   ([1462#7139559927](https://github.com/williacj/rigger/issues/1462#issuecomment-7139559927), created 17:41:19Z).
+   ([1462#7139559927](https://github.com/williacj/rigger/issues/1462#issuecomment-7139559927), created 17:41:19Z, run 040).
 4. At 17:41:51Z run 017 ran the same command with the archive and the digest that comment's reader passed. It wrote the
    extract only because the digests were equal. Its counts are `docs/spikes/engine-deaths/counts.txt`.
 5. Run 018 ran the same command over the extract, and its counts equalled run 017's (run 032).
 6. Runs 019 to 025 read the public records.
 
-The command record is `docs/spikes/engine-deaths/command-record.txt`. It holds every command the report quotes as it ran.
-The text of each script is under `docs/spikes/engine-deaths/source/`. "Run N" below names its entry there.
+The command record is `docs/spikes/engine-deaths/command-record.txt`. It holds every command its recorder ran, as it ran.
+"Run N" below names its entry there. The commands the recorder did not run are whole in
+`docs/spikes/engine-deaths/session-commands.txt`. The last text of each script is under
+`docs/spikes/engine-deaths/source/`, and each earlier text a run executed is under `docs/spikes/engine-deaths/source/versions/`
+("Script versions").
 
-The command was built test-first over invented streams. The final text passes 38 of 38 tests (run 014), and each of 32
-deliberate faults in it fails the tests (run 015).
+The command was built test-first over invented streams. The final text passes 38 of 38 tests (run 014). Each of 32
+deliberate edits of it fails at least one test by a failed assertion, and the text passes all 38 before and after them (run
+035). `docs/spikes/engine-deaths/mutation-evidence.txt` gives each edit's changed lines, and each failing test by name, place
+and assertion.
 
 ## Sources
 
@@ -59,6 +64,10 @@ deliberate faults in it fails the tests (run 015).
 | S1 | The event stream of Rigger's Emend engine, under M8-U126 ([1293#7138680301](https://github.com/williacj/rigger/issues/1293#issuecomment-7138680301)) | 2026-11-24T17:41:51Z (run 017), by the maker | 2026-11-12T21:48Z to 2026-11-24T15:34Z |
 | S2 | This repository's journal entries at a0f5a970 | 2026-11-24T17:44:00Z to 17:48:09Z (runs 022, 024) | entries named 2026-09-22 to 2026-11-24 (run 030) |
 | S3 | This repository's issue and pull request comments | 2026-11-24T17:42:16Z to 17:43:39Z (run 019) | 2026-08-14T23:58:46Z to 2026-11-24T17:41:19Z (run 019) |
+| S4 | #1429's published evidence at a0f5a970, for the two times quoted under "The line proposed" | 2026-11-24T21:20:42Z (run 038) | 2026-11-20T00:47Z to 00:48Z |
+| S5 | The maker's own session record, for the script texts and commands the recorder did not keep | 2026-11-24T21:20:41Z (run 036) and 2026-11-24T21:20:42Z to 2026-11-24T21:20:55Z (runs 037, 043) | this spike's phases, 2026-11-24 |
+
+S4 gives two times and no count. S5 gives no count and no figure. S3 was read again by comment at 2026-11-24T21:20:42Z to 2026-11-24T21:20:44Z (runs 039, 040, 042).
 
 S1's window is shortened to the minute. The privacy checker read S1 before, at a time its own comment bounds.
 
@@ -203,9 +212,10 @@ The premises, each a judgment apart from the measured figure it names:
 - **Resume saves the wait, not the work.** #1429 found that Temporal recovers the attempt, not the agent
   (`docs/journal/2026-11-20-0121-1429-temporal-dispatch-under-failure.md`). The redo happens either way, so a death's cost
   that resume removes is the time until something starts the engine again.
-- **That wait is at most about an hour now.** The Emend job restarts `run` 3600 s after a run exits
-  ([1416#6981560600](https://github.com/williacj/rigger/issues/1416#issuecomment-6981560600)). Temporal started the next
-  attempt in 4.85 to 6.18 s (`docs/spikes/temporal-dispatch-under-failure.md`, "The worker killed outright, mid-dispatch").
+- **That wait is at most about an hour now,** by the interval alone. The Emend job restarts `run` 3600 s after a run exits
+  ([1416#6981560600](https://github.com/williacj/rigger/issues/1416#issuecomment-6981560600), as run 039 read it). Temporal
+  started the next attempt 4.85 to 6.18 s after the kill. Run 038 recomputed both from #1429's published transcript and event
+  histories (`docs/spikes/temporal-dispatch-under-failure.md`, "The worker killed outright, mid-dispatch"; macOS gave 5.53 s).
 - **At 5 per 100 hours, resume would return about 5% of engine time**, at an hour a death. Below that, an always-on service
   that must itself be installed, watched and upgraded likely costs more attention than it returns.
 - **A shorter interval is the cheaper rival.** If `StartInterval` were 60 s, most of the saving would be had without a
@@ -220,8 +230,8 @@ No measured rate exists to compare with it, so this report makes no comparison.
 - **It does not support going ahead.** Its one death has no recorded cause, and the public records found no unintended
   death. The dispatch time lost was at most 42 s.
 - **It does not rule E3 out.** It covers 9.6 engine hours on one laptop, over runs a coordinator supervised. With no
-  unintended death in that time, the 95% bound is still up to 31 per 100 engine hours (2.996 over 9.6267, runs 029 and
-  017), six times the line. A fault of the kind an unattended engine meets overnight may never have had a chance to
+  unintended death in that time, the 95% bound is still up to 31.1 per 100 engine hours, 6.2 times the line (run 041, from
+  runs 029 and 017). A fault of the kind an unattended engine meets overnight may never have had a chance to
   happen.
 - **Its host-loss question is unanswered.** The stream cannot tell one, and public records name sleeps and reboots, none
   shown to have had a dispatch in flight.
@@ -230,12 +240,12 @@ No measured rate exists to compare with it, so this report makes no comparison.
 
 - **Go:** accepts that the case for automatic resume rests on judgment, as no measured rate backs it.
 - **No-go:** accepts that 9.6 supervised hours stand for the unattended operation to come.
-- **Wait:** counts again after enough more engine hours, with the same command and a record of each end's cause. This
-  costs nothing but a window, and the engine needs one small event to make it decisive.
+- **Wait:** counts again after enough more engine hours, with the same command and a record of each end's cause. That
+  costs a window, and the engine needs one small event to make it decisive.
 
 ### What would reverse this
 
-- **Toward go:** four or more unintended engine deaths in a window whose rate is at or above the line; or one host loss
+- **Toward go** (the numbers here and below are judgment, from the test in "Is there a rate?"): four or more unintended engine deaths in a window whose rate is at or above the line; or one host loss
   that stranded dispatches for longer than the launchd interval.
 - **Toward no-go:** 60 engine hours or more, unattended, with none.
 - **Against this report's reading of the stream:** a build that wrote the events otherwise; a second stream the granted
@@ -303,6 +313,45 @@ Every other proposal in #1453 stands as it was.
 | p26 | 22 |
 | p27 | 22 |
 | p28 | 22 |
+| p29 | 22 |
+| p30 | 22 |
+| p31 | 22 |
+| p32 | 22 |
+| p33 | 22 |
+| p34 | 22 |
+| p35 | 22 |
+| p36 | 22 |
+| p37 | 22 |
+| p38 | 22 |
+| p39 | 22 |
+| p40 | 22 |
+| p41 | 22 |
+| p42 | 22 |
+| p43 | 22 |
+| p44 | 22 |
+| p45 | 22 |
+| p46 | 22 |
+| p47 | 22 |
+| p48 | 22 |
+| p49 | 22 |
+| p50 | 22 |
+| p51 | 22 |
+| p52 | 22 |
+| p53 | 22 |
+| p54 | 22 |
+| p55 | 22 |
+| p56 | 22 |
+| p57 | 22 |
+| p58 | 22 |
+| p59 | 22 |
+| p60 | 22 |
+| p61 | 22 |
+| p62 | 22 |
+| p63 | 22 |
+| p64 | 22 |
+| p65 | 22 |
+| p66 | 22 |
+| p67 | 22 |
 
 The extract the Emend counts ran over is p1.
 
@@ -332,16 +381,48 @@ The extract the Emend counts ran over is p1.
 | 023 | the comment search, repeated | p25 |
 | an unrecorded one | a slow `jq` search of the comments, stopped for speed and replaced by runs 024 and 025 | p26 |
 | an unrecorded one | this report's first commit, refused: the suite discovers test files anywhere in the tree, so it ran the published test file and the spike's own copy, and the reference check read event names in code marks as paths | p27 |
-| an unrecorded one | this report's amended commit, refused by one test, L7 in `test/loop.test.mjs`, whose wait of 5 s ran out; M8-U109 ([1293#7112776030](https://github.com/williacj/rigger/issues/1293#issuecomment-7112776030)) names that test as flaky under load, and the change is docs only | p28 |
+| an unrecorded one | this report's amended commit, refused by one test, L7 in `test/loop.test.mjs`, whose wait of 5 s ran out (p28); M8-U109 ([1293#7112776030](https://github.com/williacj/rigger/issues/1293#issuecomment-7112776030)) names that test as flaky under load (run 042), and the change is docs only | p28 |
+| 034 | a fault in the new mutation script: it could not remove a directory a test had shut | p29 |
+| 034's one child, the tests over the unedited text | repeated by 035's | p30 |
+| 035 | the mutation run, repeated after that fix, with every child's output kept | p31 |
+| 035's children | the unedited text (p32); edits 1 to 32, each failing as meant (p33 to p64, in the order of `docs/spikes/engine-deaths/mutation-evidence.txt`); the text restored (p65) | p32 to p65 |
+| 037 | the first print of the unrecorded commands, whose text left an id and a scratch path unmasked | p66 |
+| 043 | that print, repeated with both masked | p67 |
 
-Runs 016, 017, 019, 024, 025, 027 to 030 and 032 ran once and did not fail. The numbering skips 026 and 031, because the
-recorder counts the files in its output directory, and one had been added there by hand before each.
+Runs 016, 017, 019, 024, 025, 027 to 030, 032, 036 and 038 to 042 ran once and did not fail. Runs 026, 031 and 033 do not
+exist, because the recorder counts the files in its output directory, and some had been added there by hand.
 
-Beyond the recorded runs, I made these, and no figure rests on them: a timing of the first version on an invented stream;
-Python look-ups of single public comments; and one `grep` through a search's output. The published `docs/spikes/engine-deaths/source/search.mjs` is its text
-from run 022 on, and runs 020 and 021 ran an earlier text. The published `docs/spikes/engine-deaths/source/rec.sh` is its text from run 016 on. The
-earlier one differed only in lacking `SPIKE_RUNS`. The published `docs/spikes/engine-deaths/source/count.mjs`, `docs/spikes/engine-deaths/source/count.test.mjs.txt` and `docs/spikes/engine-deaths/source/mutants.sh` are the texts
-runs 014 and 015 ran.
+**What cannot be recovered.** Runs 005, 007, 009, 013 and 015 each ran the tests once per edit. `docs/spikes/engine-deaths/source/mutants.sh` sent each child's
+output to a temporary file and printed one line for it, and the maker deleted those files. Those children failed as they
+were meant to, or survived, and **their full outputs no longer exist**. p10, p12, p14, p18 and p20 hold the printed lines
+alone. No claim rests on them: run 035 repeated the last of the five, with every output kept. A few ad-hoc look-ups and
+checks also failed, and their outputs were not kept. Nothing rests on them. They are:
+
+- the last part of the call that made run 027, which read a file that did not exist;
+- a `grep` the shell refused for its pattern;
+- a run of the reference check with a wrong argument.
+
+### Script versions
+
+Each earlier text came from the maker's session record. Run 036 applied the file-writing parts of the maker's own tool
+calls, as that record holds them, in an empty directory. It typed nothing from memory. `docs/spikes/engine-deaths/versions.txt` gives the
+text each of runs 001 to 032 had beside it, by version and sha256. Three checks bear on it:
+
+- The last text it recovers of each script is, byte for byte, the one first published.
+- The maker had printed the sha256 of eight texts while it worked, and the recovered ones match. A judge can check one of
+  them without the maker: the command's, which the privacy checker passed.
+- The texts between two such are fixed by the recorded edits that join them.
+
+Run 034 ran the mutation script as `docs/spikes/engine-deaths/source/versions/mutation.mjs.v1.txt`, and run 035 as the text under
+`docs/spikes/engine-deaths/source/`. Run 037 ran the command-printing script as `docs/spikes/engine-deaths/source/versions/session.py.v1.txt`, and run
+043 as the text under `docs/spikes/engine-deaths/source/`. In both, a placeholder stands for one device's name, which the script
+masks. Runs 038 to 042 ran the published texts or no script. From run 016 on, the recorder is
+`docs/spikes/engine-deaths/source/rec.sh`.
+
+Commands the recorder did not run, and no figure rests on them: a timing of the first version, Python look-ups in the public
+records, the abandoned search, and the commits. They are whole in `docs/spikes/engine-deaths/session-commands.txt`, from the
+session record, with three kinds of private identifier replaced. The editing of files, and the maker's reading of the
+repository and the card, are not there.
 
 ## Disclosures
 
@@ -349,6 +430,6 @@ runs 014 and 015 ran.
   repository's checks alone.
 - No process outlived the command that started it. The stopped `jq` search was the spike's own, and the tool that started
   it recorded it and ended it.
-- The archive is `<archive>`, owner-only. The maker's own writes there were the directory, the extract, the runs' outputs,
-  a file of digests and an index of the private items.
+- The archive is `<archive>`, owner-only. The maker's own writes there were the directory, the extract, the runs' and the
+  mutation children's outputs, a file of digests and an index of the private items.
 - The spike wrote nothing in the source's place, and read it only through the command.

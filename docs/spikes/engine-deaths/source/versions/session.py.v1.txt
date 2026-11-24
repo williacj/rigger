@@ -1,0 +1,39 @@
+# ABOUTME: Throwaway for #1462: prints the maker's own tool calls that made the runs its recorder did not,
+# whole and exact, as its session record holds them, with each one's UTC time.
+
+# Usage: SPIKE_SESSION=<record> python3 -I session.py
+# A 64-digit digest prints as <digest>, and the name of a device as <device>. Nothing else is changed.
+import json, os, re
+
+WANTED = {
+    '2026-11-24T17:22:24.273Z': 'a timing of the first version over an invented stream',
+    '2026-11-24T17:44:32.192Z': 'a look-up in the public records',
+    '2026-11-24T17:44:38.724Z': 'the search of the comments that was abandoned (p26)',
+    '2026-11-24T17:47:44.009Z': 'a look-up in the public records',
+    '2026-11-24T17:47:52.298Z': 'the stop of that search',
+    '2026-11-24T17:48:32.071Z': 'a look-up in the public records',
+    '2026-11-24T17:48:38.345Z': 'a look-up in the public records',
+    '2026-11-24T17:48:54.885Z': 'a look-up in the public records, the writing of builds.sh, and run 027; its last part failed, on a file that did not exist',
+    '2026-11-24T17:49:00.190Z': 'a comparison of run 027\'s builds',
+    '2026-11-24T17:49:39.014Z': 'a look-up in the public records',
+    '2026-11-24T17:51:01.865Z': 'a look-up in the public records',
+    '2026-11-24T17:52:59.168Z': 'the first commit, refused (p27)',
+    '2026-11-24T18:01:32.776Z': 'the commit that was made',
+    '2026-11-24T18:10:20.299Z': 'run 032, and the amended commit, refused (p28)',
+    '2026-11-24T18:31:05.673Z': 'the amended commit that was made',
+}
+found = set()
+for line in open(os.environ['SPIKE_SESSION']):
+    record = json.loads(line)
+    message = record.get('message') or {}
+    when = record.get('timestamp')
+    if when not in WANTED or message.get('role') != 'assistant' or not isinstance(message.get('content'), list): continue
+    for part in message['content']:
+        if part.get('type') != 'tool_use' or (when, part['id']) in found: continue
+        found.add((when, part['id']))
+        given = part['input'].get('command') or json.dumps(part['input'])
+        given = re.sub(r'\b[0-9a-f]{64}\b', '<digest>', given)
+        given = re.sub(r'<device>', '<device>', given)
+        print(f'### {when} {part["name"]}: {WANTED[when]}\n{given}\n')
+missing = set(WANTED) - {when for when, _ in found}
+print(f'calls printed: {len(found)}, not found: {sorted(missing)}')
