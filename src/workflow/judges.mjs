@@ -274,7 +274,6 @@ const START_FAILURES = {
   'event-emitter-missing': ['R24'],
   'dispatch-timeout': ['R23'],
   'dispatch-identity': ['R22'],
-  'groups-unreadable': ['R32'],
   'directory-illegible': ['R14', 'path'],
   'scratch-illegible': ['R15', 'path'],
   'command-character': ['R5'],

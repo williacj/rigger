@@ -236,8 +236,6 @@ test('a later start ends a recorded tracked process it confirms, leaves one it c
   // ps(1) prints `lstart` as C's `%c`; a row whose column is not that form is a start time L0 cannot read.
   for (const [row, change] of [
     ['R5: a recorded tracked pid whose process started a second later', (world) => { world.table.get(world.escaped).started = 'Thu Oct 29 12:00:01 2026'; }],
-    ['R12: a listed recorded tracked pid whose start-time read cannot be read', (world) => world.inject((_tool, args) => (args.at(-1) === 'pid=,lstart=' ? { status: 0, stdout: `${world.escaped} not a start time\n`, stderr: '' } : undefined))],
-    ['a recorded tracked pid whose start-time read fails', (world) => world.inject((_tool, args) => (args.at(-1) === 'pid=,lstart=' ? { error: Object.assign(new Error('ps refused'), { code: 2 }), stdout: '', stderr: 'ps refused' } : undefined))],
   ]) {
     await t.test(`${row} is left alive and not stopped, and recorded as not ended`, async (t) => {
       const world = trackerWorld(manualClock(0));
@@ -251,6 +249,23 @@ test('a later start ends a recorded tracked process it confirms, leaves one it c
       assert.match(named[0].reason, /start time/);
     });
   }
+  // Ambiguous identities stop the start; a mismatching identity above still goes on.
+  for (const [row, change] of [
+    ['R12: a listed recorded tracked pid whose start-time read cannot be read', (world) => world.inject((_tool, args) => (args.at(-1) === 'pid=,lstart=' ? { status: 0, stdout: `${world.escaped} not a start time\n`, stderr: '' } : undefined))],
+    ['a recorded tracked pid whose start-time read fails', (world) => world.inject((_tool, args) => (args.at(-1) === 'pid=,lstart=' ? { error: Object.assign(new Error('ps refused'), { code: 2 }), stdout: '', stderr: 'ps refused' } : undefined))],
+  ]) await t.test(`${row} is left alive and not stopped, and recorded as not ended`, async (t) => {
+    const world = trackerWorld(manualClock(0));
+    change(world);
+    const ran = await restartedOver(t, world);
+    assert.ok(ran.failure?.signs?.some(({ kind, pid, name, cmd }) => kind === 'unended' && pid === world.escaped && name === 'controlled' && cmd === `controlled ${world.escaped}`), ran.failure?.message);
+    assert.equal(world.signals.some(({ target }) => target === world.escaped), false, 'the unconfirmed identity was signalled');
+    assert.equal(world.table.get(world.escaped).state, 'S');
+    const event = ran.events.find(({ event, pid }) => event === 'recorded.unended' && pid === world.escaped);
+    assert.ok(event, 'the start did not record its unended process');
+    for (const [key, value] of Object.entries({ layer: 'L0', dispatch: 'd-dead', card: 1467 })) assert.equal(event[key], value);
+    assert.match(event.reason, /start time/);
+    assert.ok(readGroups(ran.state)[0].unended.some(({ pid }) => pid === world.escaped), 'the sign was not retained');
+  });
   await t.test('R11: a recorded tracked pid no read lists is sent no signal and named by no event', async (t) => {
     const world = trackerWorld(manualClock(0));
     world.table.delete(world.escaped);

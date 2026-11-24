@@ -282,38 +282,39 @@ function leavePartial(directory) {
   writeFileSync(join(state, 'groups.json.partial'), '[{"group":');
 }
 
-test('given a leftover partial record beside a record holding no entry, or beside no record, the call leaves no partial record in the state directory', SETTLES_WITHIN, async (t) => {
+test('given an unreadable partial record beside an empty or absent record, the start keeps both files and names the sign', SETTLES_WITHIN, async (t) => {
   for (const record of ['[]', undefined]) {
     const directory = scratch(t);
     leavePartial(directory);
     if (record !== undefined) writeFileSync(join(stateOf(directory), 'groups.json'), record);
 
-    await killIn(directory);
-
-    assert.deepEqual(readdirSync(stateOf(directory)).filter((file) => file.startsWith('groups.json')), record === undefined ? [] : ['groups.json'], `with the record ${record}`);
+    const failure = await failureOf(killIn(directory));
+    assertPartialSign(failure, directory);
+    assert.equal(existsSync(recordPath(stateOf(directory))), record !== undefined);
+    if (record !== undefined) assert.equal(readFileSync(recordPath(stateOf(directory)), 'utf8'), record);
+    assert.equal(readFileSync(join(stateOf(directory), 'groups.json.partial'), 'utf8'), '[{"group":');
   }
 });
 
-test('given a leftover partial record beside a record holding an entry, the call kills the entry\'s group, clears its entry, and leaves no partial record', SETTLES_WITHIN, async (t) => {
+test('given an unreadable partial record beside a recorded group, the start keeps the group alive and writes nothing', SETTLES_WITHIN, async (t) => {
   const directory = scratch(t);
   const started = await startGroup(t, directory, 'group');
   writeGroups(stateOf(directory), [entryFor(started)]);
   leavePartial(directory);
 
-  await killIn(directory);
-
-  assert.equal(alive(started.leader) || alive(started.member), false, 'a process of the recorded group is alive');
-  assert.deepEqual(readGroups(stateOf(directory)), []);
-  assert.deepEqual(readdirSync(stateOf(directory)).filter((file) => file.startsWith('groups.json')), ['groups.json']);
+  const failure = await failureOf(killIn(directory));
+  assertPartialSign(failure, directory);
+  assert.equal(alive(started.leader) && alive(started.member), true, 'a process was killed before the partial record was read');
+  assert.deepEqual(readGroups(stateOf(directory)), [entryFor(started)]);
+  assert.equal(readFileSync(join(stateOf(directory), 'groups.json.partial'), 'utf8'), '[{"group":');
 });
 
-/**
- * The L1 events in the stream in `directory`'s state directory recording a partial record the
- * call could not remove, as the fields a reader names them by.
- */
-const partialsKeptIn = (directory) => readEvents(stateOf(directory))
-  .filter((event) => event.event === 'record.partial-kept')
-  .map(({ layer, path, reason }) => ({ layer, path, reason: typeof reason }));
+/** An unreadable unfinished write is named without relying on the event sink. */
+function assertPartialSign(failure, directory) {
+  const path = join(stateOf(directory), 'groups.json.partial');
+  assert.ok(failure.signs?.some((sign) => sign.kind === 'record' && sign.path === path && typeof sign.reason === 'string'), failure.message);
+  assert.equal(existsSync(path), true, 'the unreadable partial file was removed');
+}
 
 /**
  * The two partial records a start cannot remove: a file in a state directory that refuses writes,
@@ -330,7 +331,7 @@ const UNREMOVABLE = {
 };
 
 for (const [unremovable, leave] of Object.entries(UNREMOVABLE)) {
-  test(`given a leftover partial record the call cannot remove, ${unremovable}, beside a record holding an entry, the call still kills the entry's group, and records why the partial record stayed`, SETTLES_WITHIN, async (t) => {
+  test(`given an unreadable partial record, ${unremovable}, beside an entry, the start leaves its group alive and names the sign`, SETTLES_WITHIN, async (t) => {
     const directory = scratch(t);
     const state = stateOf(directory);
     const started = await startGroup(t, directory, 'group');
@@ -338,10 +339,10 @@ for (const [unremovable, leave] of Object.entries(UNREMOVABLE)) {
     writeFileSync(streamPath(state), '');
     leave(state, t);
 
-    await killIn(directory).catch(() => {});
-
-    assert.equal(alive(started.leader) || alive(started.member), false, 'a process of the recorded group is alive');
-    assert.deepEqual(partialsKeptIn(directory), [{ layer: 'L1', path: join(state, 'groups.json.partial'), reason: 'string' }]);
+    const failure = await failureOf(killIn(directory));
+    assert.equal(alive(started.leader) && alive(started.member), true, 'a recorded process was killed');
+    assert.deepEqual(readGroups(state), [entryFor(started)]);
+    assertPartialSign(failure, directory);
   });
 }
 
@@ -747,19 +748,19 @@ test('FM-ready-C0(1) launch, failed ps, and delayed marker finish before C1 reje
   console.log(`C595_CELL ${JSON.stringify({ cell: 'FM-ready-C0(1)', recordCell: 'R-C1', content, completedPrefix: [], beforeScratch, beforeStart, events, started })}`);
 });
 
-test('given a leftover partial record the call cannot remove beside a record holding no entry, the call settles without failing, and records why the partial record stayed', SETTLES_WITHIN, async (t) => {
+test('given an unreadable partial record beside an empty record, the start writes nothing and names the sign', SETTLES_WITHIN, async (t) => {
   const directory = scratch(t);
   const state = stateOf(directory);
   writeGroups(state, []);
   writeFileSync(streamPath(state), '');
   UNREMOVABLE['where the partial record is a directory'](state);
 
-  await killIn(directory);
-
-  assert.deepEqual(partialsKeptIn(directory), [{ layer: 'L1', path: join(state, 'groups.json.partial'), reason: 'string' }]);
+  const failure = await failureOf(killIn(directory));
+  assert.deepEqual(readGroups(state), []);
+  assertPartialSign(failure, directory);
 });
 
-test('given a leftover partial record the call cannot remove and a sink that refuses every append, the call rejects naming the unrecorded event and the partial record', SETTLES_WITHIN, async (t) => {
+test('given an unreadable partial record and a refusing sink, the start still names the partial record and writes nothing', SETTLES_WITHIN, async (t) => {
   const directory = scratch(t);
   const state = stateOf(directory);
   writeGroups(state, []);
@@ -767,7 +768,8 @@ test('given a leftover partial record the call cannot remove and a sink that ref
 
   const failure = await failureOf(killRecordedGroups({ directory: state, sink: refusingSink(directory) }));
 
-  assert.ok(failure.message.includes('record.partial-kept') && failure.message.includes(join(state, 'groups.json.partial')), failure.message);
+  assertPartialSign(failure, directory);
+  assert.deepEqual(readGroups(state), []);
 });
 
 // proves R-STATE-11
@@ -1435,4 +1437,37 @@ test('R8: given a record whose tracked process has no start time, or a pid of 0,
 
     for (const [pid, what] of [[started.leader, 'leader'], [started.member, 'member'], [escaped, 'M6']]) assertUntouched(pid, `the ${what}, for ${JSON.stringify(tracked)}`);
   }
+});
+
+// Host reason: OS behaviour; a macOS table read must show that an unended pid has exited or belongs to another process, without signalling its replacement.
+// Deterministic counterpart: test/sign-refusal.test.mjs :: S7-S8: only a successful table read shows a process gone, and a zombie is gone
+// proves R-STATE-38
+test('S4-S6: a later start works after an exited or reused unended pid, including a prior recorded.unended', SETTLES_WITHIN, async (t) => {
+  const { dispatch } = await import('../src/execution/run.mjs');
+  for (const observation of ['S4 exited', 'S5 reused', 'S6 previously unended']) await t.test(observation, async (t) => {
+    const directory = holding(t);
+    const group = await reapedPid();
+    let pid;
+    let started;
+    if (observation === 'S4 exited') { pid = await reapedPid(); started = 0; }
+    else { pid = await tailIn(t, directory, join(directory, 'foreign')); started = startOf(pid) - 1; }
+    const entry = { group, started: 0, dispatch: 'd-earlier', card: 1479,
+      ...(observation === 'S6 previously unended' ? { tracked: [{ pid, started }] } : { settled: true, unended: [{ pid, started, name: 'tail', cmd: '/usr/bin/tail -f hold' }] }) };
+    writeGroups(stateOf(directory), [entry]);
+    const signals = [];
+    const host = { ...realHost, signal: (target, name) => { if (name !== 0) signals.push({ target, name }); return realHost.signal(target, name); } };
+    if (observation === 'S6 previously unended') {
+      await assert.doesNotReject(killIn(directory, { host }), 'a start with only a shown-gone identity must proceed');
+      assert.ok(readEvents(stateOf(directory)).some(({ event, pid: named }) => event === 'recorded.unended' && named === pid), 'the R5 recorded.unended premise was not established');
+    }
+    await assert.doesNotReject(killIn(directory, { host }), 'a start with only a shown-gone identity must proceed');
+    assert.deepEqual(readGroups(stateOf(directory)), [], 'the shown-gone process remained a sign');
+    assert.equal(signals.some(({ target }) => target === pid || target === -pid), false, 'the replacement was signalled');
+    if (observation !== 'S4 exited') assertUntouched(pid, 'the real replacement process');
+    const sink = openSink({ directory: stateOf(directory), run: 'r-after-sign', now: Date.now });
+    const result = await dispatch({ id: 'd-after-sign', card: 1479, directory: stateOf(directory), sink, command: '/usr/bin/true', args: [], cwd: directory, env: {}, timeout: 10_000, host });
+    assert.equal(result.exit, 0);
+    assert.ok(readEvents(stateOf(directory)).some(({ event, dispatch }) => event === 'dispatch.start' && dispatch === 'd-after-sign'), 'the start did not work');
+    if (observation !== 'S4 exited') assertUntouched(pid, 'the real replacement after dispatch');
+  });
 });

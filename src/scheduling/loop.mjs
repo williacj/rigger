@@ -10,6 +10,8 @@ import { randomUUID } from 'node:crypto';
 import { roleDispatch } from '../execution/role.mjs';
 import { keepOutput } from '../execution/kept-output.mjs';
 import { LINE_DELETED, LINE_MOVED, SCRATCH_REFUSED } from '../execution/workspace.mjs';
+import { signsStanding } from '../execution/run.mjs';
+import { SIGN_STOPPED, signFailure } from '../execution/groups.mjs';
 import { dispatch as dispatchOnL1 } from '../execution/run.mjs';
 import { stepDispatch } from '../execution/step.mjs';
 import { EVENT_REFUSED, NOT_STARTED, whenElapsed } from '../substrate/process.mjs';
@@ -176,7 +178,7 @@ function setAside(clockHeld) {
  * nothing to stop it recording and reading over what the dead engine left (`ARCHITECTURE.md`,
  * "Failure model").
  */
-function claiming({ config, board, facts, l2, sink, kill, readAdmission, follow, halted }) {
+function claiming({ config, board, facts, l2, sink, kill, readAdmission, follow, halted, hasSigns }) {
   if (typeof kill !== 'function') throw new Error(`L3 was handed no kill of recorded process groups, so it cannot start: kill is ${typeof kill}`);
   if (typeof facts !== 'function') throw new Error(`L3 was handed no facts call of L2's, so it cannot ask L2 about a card before claiming it: the facts call is ${typeof facts}`);
   const concurrency = config.concurrency ?? DEFAULT_CONCURRENCY;
@@ -287,6 +289,7 @@ function claiming({ config, board, facts, l2, sink, kill, readAdmission, follow,
      */
     take: async (limit, setAsides, poll = false, memory) => {
       await killed();
+      if (hasSigns?.()) return { claims: [], failures: [], notices: [] };
       const failures = [];
       let unrecorded = false;
       try {
@@ -538,7 +541,24 @@ function triggerRecord(readRecord) {
  */
 export function loop({ config, board, decide, facts, l2, sink, kill, workspace, workspaceTip, judgeDirectory, escalationDirectory, removeDirectories, state, readRecord = () => [], environment, run, host, readTimeout, clock, drained }) {
   let admissionRecord;
-  const { concurrency, claims, killed, record, refused, take, start, release } = claiming({ config, board, facts, l2, sink, kill, readAdmission: () => admissionRecord.read(), follow: () => follow(), halted: () => unsaved !== undefined });
+  let stoppedSigns = [];
+  let signStop;
+  const observeSigns = (signs = []) => { stoppedSigns = [...new Map([...stoppedSigns, ...signs].map((sign) => [JSON.stringify(sign), sign])).values()]; };
+  const stopped = () => {
+    if (signStop !== undefined) return signStop;
+    signStop = signFailure(stoppedSigns);
+    try { sink.emitter({ layer: 'L3' }).emit('sign.stopped', { signs: stoppedSigns }); }
+    catch (cause) { signStop.message += `; the sink refused sign.stopped: ${cause.message}`; }
+    return signStop;
+  };
+  const reap = typeof kill !== 'function' ? kill : async () => {
+    try { await kill(); } catch (failure) {
+      if (failure.signs === undefined) throw failure;
+      observeSigns(failure.signs);
+      throw stopped();
+    }
+  };
+  const { concurrency, claims, killed, record, refused, take, start, release } = claiming({ config, board, facts, l2, sink, kill: reap, hasSigns: () => stoppedSigns.length > 0, readAdmission: () => admissionRecord.read(), follow: () => follow(), halted: () => { observeSigns(signsStanding(state, { host, readTimeout })); return unsaved !== undefined || stoppedSigns.length > 0; } });
   // The column each merge's end left its card in, by card, which `merged` takes for the run's memory.
   const mergeEnds = new Map();
   const endedAt = (card, column) => {
@@ -608,6 +628,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
    * the id as `dispatch`, from which L2 composes a hold's dispatch ids.
    */
   const dispatchStep = async (card, step, path, fields) => {
+    if (stoppedSigns.length > 0) throw signFailure(stoppedSigns);
     const id = `d-${randomUUID()}`;
     try {
       sink.emitter({ layer: 'L3', card: card.number, dispatch: id }).emit('dispatch', { step: step.name, ...fields });
@@ -615,6 +636,8 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       throw refusedStart(`card #${card.number}'s step \`${step.name}\` was not started, because the event sink refused to record its start`, refusal);
     }
     const [outcome] = await Promise.allSettled([dispatchOnL1({ id, card: card.number, directory: state, sink, host, readTimeout, ...stepDispatch(step, path, environment) })]);
+    observeSigns(outcome.value?.signs ?? outcome.reason?.signs);
+    if (outcome.reason?.code === SIGN_STOPPED) throw signFailure(stoppedSigns);
     return { ...outcome, dispatch: id };
   };
 
@@ -634,6 +657,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
    * carries the id as `dispatch`, as `dispatchStep`'s does.
    */
   const dispatchRole = async (card, answer, { cwd, directory, reach, scratch, repository, maker }, fields, stamp = (given) => given, id = `d-${randomUUID()}`) => {
+    if (stoppedSigns.length > 0) throw signFailure(stoppedSigns);
     try {
       sink.emitter({ layer: 'L3', card: card.number, dispatch: id }).emit('dispatch', { role: answer.role, tier: answer.tier, ...fields });
     } catch (refusal) {
@@ -644,6 +668,8 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       return dispatchOnL1({ id, card: card.number, directory: state, sink, host, readTimeout, ...handed });
     };
     const [outcome] = await Promise.allSettled([run()]);
+    observeSigns(outcome.value?.signs ?? outcome.reason?.signs);
+    if (outcome.reason?.code === SIGN_STOPPED) throw signFailure(stoppedSigns);
     const result = outcome.status === 'fulfilled' ? outcome.value : outcome.reason?.result;
     if (result !== undefined) keepOutput({ directory: state, id, card: card.number, sink, result });
     return { ...outcome, dispatch: id };
@@ -1159,7 +1185,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       [settled[at]] = await Promise.allSettled([judged(card, judge, repeat, scope)]);
       interrupted ||= settled[at].status === 'rejected' || settled[at].value.halt;
     }
-    const decision = ask({ judged: Object.fromEntries(settled.map((each, at) => [answer.judges[at].role, { decision: each.status === 'fulfilled' ? each.value.decision : undefined }])) });
+    const decision = stoppedSigns.length > 0 ? { action: 'ignore' } : ask({ judged: Object.fromEntries(settled.map((each, at) => [answer.judges[at].role, { decision: each.status === 'fulfilled' ? each.value.decision : undefined }])) });
     remember(decision);
     // A judge L2 held fails the card held, as one that handed back no outcome fails it.
     const ended = settled.map((each, at) => (each.status === 'fulfilled'
@@ -1382,6 +1408,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
     failures.push(...ended.filter((each) => each.failure !== null).map((each) => each.failure));
     const reached = ended.map((each) => each.reached).filter((each) => each !== undefined);
     for (const [at, each] of ended.entries()) if (each.reached !== undefined) reachedOrder.set(each.reached, claimed[at].order);
+    if (stoppedSigns.length > 0 && claims.size === 0) failures.push(stopped());
     if (failures.length > 0) {
       // A closed admission's notices would otherwise go only with the answer this throw replaces.
       if (closed !== undefined) failures.push(...notices.map(noticeFailure));
@@ -1446,7 +1473,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       await killed();
       if (stop?.aborted) return [];
       let clockStopped = false;
-      const ending = () => clockStopped || unsaved !== undefined || stop?.aborted === true;
+      const ending = () => clockStopped || unsaved !== undefined || stoppedSigns.length > 0 || stop?.aborted === true;
       const active = () => !ending();
       const pending = new Map();
       const clockFailed = (failure) => handOver({ failure });
