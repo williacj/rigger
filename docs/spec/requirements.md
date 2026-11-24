@@ -635,6 +635,16 @@ Claude Code's configuration home is `~/.claude` unless the consumer moves it. Ea
 | R-STATE-19 | Where Rigger cannot end a process `R-STATE-17` or `R-STATE-10` obliges it to end, it records the process by name and command line as not ended, and waits on it no further. That holds only where Rigger may not signal the process, or where the process outlives Rigger's kill for a bound Rigger sets. Except as `R-STATE-26` allows, where Rigger cannot read which processes a group or a dispatch's directory held, it records that group or directory in their place, and waits on it no further. | the engine | the test suite | |
 | R-STATE-28 | Where Rigger's own exit runs past a fixed time, it ends each remaining group without searching that group's directories, keeps that group's record, and its next start ends what remains in them. | the engine | the test suite | |
 | R-STATE-29 | A process's parent is the process that started it. A process descends from a dispatch while its parent is in the process group Rigger created for that dispatch, or descends from that dispatch. Once it has descended, it stays the dispatch's after its parent exits, whatever process group or working directory it moves to. Whenever `R-STATE-17`, `R-STATE-28` or `R-STATE-10` obliges Rigger to end a dispatch's processes, Rigger also ends every process descended from that dispatch, except as `### R-STATE-29 — A dispatch's descendants` allows. `R-STATE-12`, `R-STATE-13` and `R-STATE-19` apply to such a process as to one `R-STATE-17` obliges Rigger to end. For `R-STATE-26`, a read that showed it is a read of its dispatch's process group. | the engine | the test suite | |
+| R-STATE-30 | While a sign below stands in its record, Rigger starts no dispatch for the repository it works on that host, whatever role or card the dispatch is for. `### R-STATE-30 — Signs Rigger stops on` bounds each sign. A sign is any of these, each until the condition it names: | the engine | the test suite | |
+| R-STATE-31 | — a process of a dispatch that Rigger could not end, as `R-STATE-19` has it, until Rigger shows it gone; | the engine | the test suite | |
+| R-STATE-32 | — a process group, a dispatch's directory, or a dispatch, recorded in place of processes Rigger could not read, until a later read of it shows none of them alive, or shows it is not the one recorded; | the engine | the test suite | |
+| R-STATE-33 | — Rigger's record of the processes it must still clean up, where Rigger cannot read it, until Rigger reads it; | the engine | the test suite | |
+| R-STATE-34 | — a write of that record that failed or did not complete, and left it without a process the write would have named, until Rigger shows that process gone. | the engine | the test suite | |
+| R-STATE-35 | A start of Rigger tries again to end each process a sign names that it confirms is still the one it recorded, whatever ended its previous run. It also ends each process a read shows alive in a group, directory or dispatch a sign names, where that is still the one recorded. A start that still finds a sign after that starts no work. | the engine | the test suite | |
+| R-STATE-36 | A dispatch is running once its command has started. A dispatch running when a sign arises runs to its own end, whatever role or card it is for. A Rigger that finds a sign while running claims no card after it, and ends its run once no dispatch it started still runs. `### R-STATE-36 — Work beside a sign` bounds this. | the engine | the test suite | |
+| R-STATE-37 | Where a sign stops Rigger, Rigger names each sign in its output and in the event record, and the verb exits non-zero. It names a process by pid, name and command line, and a failed read by what it read and why. It names a record by its path, and a failed or unfinished write of it by that path and why. | the engine | the test suite | |
+| R-STATE-38 | Rigger shows a process gone only by a read of the process table that succeeds and shows no process at its pid is still the one Rigger recorded. A process that has exited and that no parent has yet reaped is gone. | the engine | the test suite | |
+| R-STATE-39 | A dispatch that a sign kept from starting spends none of its card's attempts, and counts toward no hold under `R-FAIL-8`. | the engine | the test suite | |
 | R-STATE-10 | If Rigger is itself killed outright, its next start ends what remains of each dispatch whose process group it recorded, except as `R-STATE-11` and `R-STATE-19` allow. | the engine | the test suite | |
 | R-STATE-11 | A start that cannot read its record of process groups ends nothing, starts no work, and names the record. A start that cannot tell whether a recorded group is still the one Rigger recorded ends nothing in it, starts no work, and names the group. A later start ends such a group only once it confirms the group is still Rigger's. | the engine | the test suite | |
 | R-STATE-12 | Except as `R-STATE-26` allows, Rigger records every process it had to end by force. Where it cannot read which processes a group held, it records the group it ended in their place. | the engine | the event record, by the kill events it holds | |
@@ -659,6 +669,56 @@ Each row is one process that descended from a dispatch and left its process grou
 | no read showed it while its parent was in the dispatch's process group or descended from the dispatch, and a read failed while the dispatch ran | any | out: Rigger records the dispatch and why in its place, as `R-STATE-19` records a group it cannot read |
 | no read showed it while its parent was in the dispatch's process group or descended from the dispatch, and no read failed | any | out: a known escape. An immediate double fork is the known case: a descendant starts a process that leaves the dispatch's process group, starts this one, and exits at once |
 | it started after the last read before Rigger ended the dispatch's process group | any | out: no read could show it |
+
+### R-STATE-30 — Signs Rigger stops on
+
+Each row is one thing Rigger knows of an earlier dispatch's process, or of its record, at the moment it would start a dispatch. A read of a dispatch is a read of its process group, of each of its directories, and of each process Rigger recorded as descended from it. A read that fails shows nothing.
+
+| What Rigger has | Scope |
+|---|---|
+| a process of a dispatch that Rigger could not end, and a later read shows a process at its pid that is still the one Rigger recorded | in: a sign |
+| a process of a dispatch that Rigger could not end, and a later read cannot tell whether the process at its pid is still the one Rigger recorded | in: a sign |
+| a process of a dispatch that Rigger could not end, where the sink refused the event recording it | in: a sign, as any process Rigger could not end |
+| a process of a dispatch that Rigger could not end, and a later read lists no process at its pid, or one that is not the one Rigger recorded | out: shown gone, so no sign |
+| a process of a dispatch that Rigger could not end, now exited and not yet reaped by its parent | out: shown gone, so no sign |
+| a descendant a later start cannot confirm is still the one recorded because a read shows it is another process, recorded as not ended under `### R-STATE-29 — A dispatch's descendants` | out: shown gone, so no sign |
+| a group, directory or dispatch recorded in place of the processes Rigger could not read, and every later read of it failed | in: a sign |
+| a group, directory or dispatch recorded in place of the processes Rigger could not read, and a later read of it succeeded and showed none of its processes alive | out: no sign |
+| a group, directory or dispatch recorded in place of the processes Rigger could not read, still the one recorded, and a later read of it succeeded and showed processes of it alive | in: a sign. A start ends those processes, as `R-STATE-35` has it, and the sign stands until a later read shows none of them alive |
+| a group recorded in place of the processes Rigger could not read, whose id a later read shows is now another group's | out: no longer the one recorded, so no sign |
+| a directory recorded in place of the processes Rigger could not read, gone from its path or replaced there | out: no longer the one recorded, so no sign |
+| a process still working in such a directory after it left its path | out: no read can find it there, as no read showed it |
+| a record Rigger cannot read, at a start or while it runs | in: a sign, and at a start `R-STATE-11` holds as well |
+| a recorded group Rigger cannot confirm is the one it recorded | out of `R-STATE-30`: `R-STATE-11` governs alone, and has the start start no work |
+| a write of the record that failed while Rigger runs, leaving the record without a process the write would have named | in: a sign, until that process is shown gone |
+| at a start, a write of the record that did not complete, where Rigger can read what that write would have named | in: a sign, until each process it named and the record does not is shown gone |
+| at a start, a write of the record that did not complete, where Rigger cannot read what that write would have named | in: a record Rigger cannot read |
+| a write of the record that failed outright, after which Rigger was killed outright | out: the next start has nothing to read the failure from |
+| a write that left the record without a process the write would have named, where each later write of it failed, no unfinished write remained at Rigger's own exit, and Rigger had not shown the process gone by then | out: the next start has nothing to read the failure from. Rigger names the sign on standard error at that exit, as `R-STATE-37` names it |
+| a process Rigger saw and had not yet recorded when it was killed outright, as `### R-STATE-29 — A dispatch's descendants` has it | out: no record of it survives |
+| a dispatch's start in the event record with no end, whose process group Rigger was killed outright before recording | out: the start event names no group and no directory identity, so no read could show the sign gone |
+| a process no read showed, where no read failed; an immediate double fork's grandchild is the known case | out: a known escape, which `### R-STATE-29 — A dispatch's descendants` names |
+| a process that started after the last read before Rigger ended its dispatch's process group | out: no read could show it |
+| a record removed by anyone but Rigger | out: Rigger cannot tell it from no record |
+| a process of a command that is not a dispatch, which Rigger could not end | out: it belongs to no dispatch. `R-STATE-19` still records it |
+| a sign another engine holds, for another repository on the same host | out: each engine stops on the signs in its own record |
+| a dispatch on another host | out: `D11` keeps one engine per repository, and `D13` makes macOS v0's only host |
+
+### R-STATE-36 — Work beside a sign
+
+Each row is one piece of work other than the dispatch whose process is the sign. A panel's judges run together, so each judge of a panel is a row here, as a step or another card's maker is.
+
+| The other work | Scope |
+|---|---|
+| a dispatch Rigger would start after the sign arose, in the same run, for any role or card: the same card's next attempt, its next round, a judge, a provisioning step, or an escalation's role | in: not started |
+| a dispatch whose start Rigger recorded, and whose command had not started when the sign arose | in: its command does not start, and `R-STATE-39` holds |
+| a judge's dispatch whose start Rigger recorded, and whose command never started because of a sign | out of `R-LOOP-25`, which covers a judge's dispatch that started: it is no judge failure, and counts toward no escalation under `R-LOOP-26` |
+| a dispatch whose command had started when the sign arose, for any role or card, a judge of the same panel among them | out of the refusal: it runs to its own end |
+| a card Rigger would claim after the sign arose, in the same run | in: not claimed |
+| a board move, an escalation note or a merge for a card already claimed, that is not a dispatch | out of the refusal: the rows refuse dispatches and claims only |
+| a dispatch Rigger would start in a later run, where a sign still stands once the start has tried again to end each process a sign names | in: not started, since the start starts no work |
+| a dispatch Rigger would start in a later run, where the start has shown every sign gone | out: started as any dispatch is |
+| `rigger plan` while a sign stands | out: `plan` reads no process table, so it lists cards a start held by a sign will not pull |
 
 ## R-FAIL — infrastructure failure
 
