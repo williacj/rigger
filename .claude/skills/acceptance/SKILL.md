@@ -26,7 +26,8 @@ every rule below is a way of passing it. Its other half — one condition per it
 "Write each item".
 
 You will not be there when the card is judged. A judge that cannot rule on an item records it
-unmet (`R-LOOP-5`), and a verdict leaving any item unmet is not sound (`R-VERDICT-4`).
+unmet (`R-LOOP-5`), and a verdict leaving any item unmet is not sound (`R-VERDICT-4`). An item
+only you can read is paid for in rounds, by the maker, later.
 
 ## Start from the card, not from the bullets
 
@@ -43,13 +44,16 @@ refuses outright (`R-CARD-8`). Work these out before you write any:
   "Documents own their facts", requires.
 - **The boundary and failure states that apply.** Empty input, invalid input, limits,
   permissions, a dependency failing, partial completion. Consider each; carry over only the ones
-  this card can actually reach.
+  this card can actually reach. A documentation card owes no error criterion, and one invented to
+  fill out the list is filler a judge still has to rule on.
 
 ## Write each item
 
 **One condition per item.** That is `R-CARD-2`'s first half; an `and` usually hides two.
 
 **Each item stands on its own.** Each names enough subject and context to be ruled on by itself.
+A judge reconstructing an item from the bullet above it is one misreading away from ruling on
+the wrong thing.
 
 **Name the thing, and the observable fact about it.** The ruling should be a reading, not an
 opinion. Name the concrete thing that would prove the item false as well — the output, the file,
@@ -86,8 +90,7 @@ a named document cites a named id.
 Items may permit citing, not quoting, persistent evidence: a CI job, run attempt or comment by
 URL; a file by path at a commit reachable from the judged head or `main`. Quote local output;
 never cite CI artifacts or off-forge records. Citations name their record's commit, which must be
-the item's; unopenable records are uncited. Items may demand quotes. As an exception to the rule
-against off-forge records, predeclared private material a judge opened is evidence by its id.
+the item's; unopenable records are uncited. Items may demand quotes.
 
 A **Given/When/Then** bullet where the ruling needs its context to make sense. `R-CARD-2` still
 holds, so one item carries one independently ruleable outcome, never a scenario with several
@@ -103,19 +106,17 @@ holds, so one item carries one independently ruleable outcome, never a scenario 
 ```
 
 Those are `R-CARD-7`'s two halves, one apiece; `plan` is the verb the README gives for showing
-what a run refuses.
+what a run refuses. Each bullet repeats its own context rather than borrowing it from the one
+above: standing alone is worth the words it costs.
 
 ## A spike card
 
 A spike card's acceptance states what a complete answer contains, never what the answer is
-(`R-CARD-9`).
+(`R-CARD-9`). Fixing the answer in advance is not a bar; it is the finding, and it leaves the
+spike unable to report the one thing it was dispatched to find out.
 
 Write the shape of the report: which options it weighed, what it measured, what it recommends
 and on what evidence, and what would reverse the recommendation.
-
-A spike card that uses a personal machine adopts `docs/host-bootstrap.md`, "Spikes on a personal
-machine", and names its privacy checker. It predeclares its publishable facts and the private
-material an item rests on.
 
 ## Scope, and what a change costs
 
