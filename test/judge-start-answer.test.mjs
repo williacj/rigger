@@ -50,7 +50,7 @@ test('L2 answers a panel hold ahead of a stop in either order without recording 
 // A missing mapping, an identity comparison by message, or an unbounded retry breaks its own row.
 // proves R-FAIL-8
 test('each host row R2 through R37 retries once and holds the same judge failing the same way', async (t) => {
-  assert.equal(HOST_REPORTS.length, 36);
+  assert.equal(HOST_REPORTS.length, 35);
   for (const [row, kind, identity] of HOST_REPORTS) await t.test(row, () => {
     const first = report({ kind, ...identity });
     const second = report({ kind, ...identity });

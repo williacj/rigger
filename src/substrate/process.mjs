@@ -420,7 +420,11 @@ function cleanup() {
       ended.push([group, call, call.contained ? {} : now - began < EXIT_CARE_BOUND ? endedNow(group, call) : killedBare(group, call)]);
     });
   }
-  const unrecorded = ended.flatMap(([, { emitter, events }, { kills = [] }]) => record(emitter, [...events.splice(0), ...kills]));
+  const unrecorded = ended.flatMap(([, call, { kills = [] }]) => {
+    const events = [...call.events.splice(0), ...kills];
+    handSigns(call, events);
+    return record(call.emitter, events);
+  });
   if (unrecorded.length > 0) attempt(() => writeWhole(`${refused(unrecorded).message}\n`));
   for (const [group, { onExit, child }, look] of ended) attempt(() => onExit?.(group, { ...endingOf(child, look), ...(look.unswept === undefined ? {} : { unswept: look.unswept }) }));
   for (const step of steps) attempt(step);
@@ -1463,15 +1467,15 @@ export function identityOf(path, host = realHost) {
  * no longer exists, or the path now names another directory.
  */
 function unconfirmed(directory, identity, host = realHost) {
-  if (identity?.device === undefined || identity?.inode === undefined) return 'the record carries no device and inode for it, so the start cannot tell it is the directory recorded';
+  if (identity?.device === undefined || identity?.inode === undefined) return { reason: 'the record carries no device and inode for it, so the start cannot tell it is the directory recorded', gone: false };
   let now;
   try {
     now = identityOf(directory, host);
   } catch (error) {
-    return `its device and inode cannot be read: ${error.message}`;
+    return { reason: `its device and inode cannot be read: ${error.message}`, gone: error.code === 'ENOENT' };
   }
   if (now.device === identity.device && now.inode === identity.inode) return undefined;
-  return `it is not the directory recorded: it is device ${now.device}, inode ${now.inode}, where the record names device ${identity.device}, inode ${identity.inode}`;
+  return { reason: `it is not the directory recorded: it is device ${now.device}, inode ${now.inode}, where the record names device ${identity.device}, inode ${identity.inode}`, gone: true };
 }
 
 /**
@@ -1948,7 +1952,7 @@ function refused(unrecorded, result, ending = '') {
  * names them in the dispatch's entry there. Where it throws, each stays tracked in L0's memory
  * alone, and the dispatch's ending still ends it ("Failure model").
  */
-export async function runCommand({ command, args, cwd, env, input, timeout, emitter, onGroup, onExit, onTracked, directory, scratch, track = false, host = realHost, readTimeout = READ_TIMEOUT, outputBound = OUTPUT_BOUND, trace }) {
+export async function runCommand({ command, args, cwd, env, input, timeout, emitter, onGroup, onExit, onTracked, onSigns, directory, scratch, track = false, host = realHost, readTimeout = READ_TIMEOUT, outputBound = OUTPUT_BOUND, trace }) {
   requireClock(host.clock);
   const { ps, lsof, signal: kill } = host;
   // The caller opens the emitter, so an `L0` event carries the card L0 never knows. There is no
@@ -1984,7 +1988,7 @@ export async function runCommand({ command, args, cwd, env, input, timeout, emit
     child.stdin.end(input);
   }
   const output = Promise.all([drained(child.stdout), drained(child.stderr)]);
-  const call = { emitter, host, ps, lsof, readTimeout, kill, onExit, onTracked, trace, directory: real, scratch: scratchReal, child, events: [], contained: false };
+  const call = { emitter, host, ps, lsof, readTimeout, kill, onExit, onTracked, onSigns, trace, directory: real, scratch: scratchReal, child, events: [], contained: false };
   if (track) call.tracked = new Map();
   calls.set(child.pid, call);
   // A call the exit cleanup took is one it has ended and recorded, so the call records nothing
@@ -2002,6 +2006,7 @@ export async function runCommand({ command, args, cwd, env, input, timeout, emit
     // Nothing reads the output of a command that runs no further, so its pipes are let go.
     const kills = [...(await descendants(call)), ...(await contain(child.pid, call, 'survivor.killed')), ...(await censused(call))];
     call.contained = true;
+    handSigns(call, kills);
     const unrecorded = record(emitter, taken() ? [] : kills);
     release();
     child.stdout.destroy();
@@ -2039,6 +2044,7 @@ export async function runCommand({ command, args, cwd, env, input, timeout, emit
   }
   const [stdout, stderr] = await output;
   const result = { exit, timedOut, stdout, stderr };
+  if (!taken()) handSigns(call, events);
   const unrecorded = record(emitter, taken() ? [] : events.splice(0));
   release();
   if (unrecorded.length > 0) throw refused(unrecorded, result, timedOut ? `the timeout of ${timeout} ms ended ${command}, and ` : '');
@@ -2071,21 +2077,41 @@ export async function runCommand({ command, args, cwd, env, input, timeout, emit
  * `recorded.unended` with why. One no read lists has already ended, and it records nothing of it
  * (`ARCHITECTURE.md`, "Failure model").
  */
-export async function killRecordedGroup({ group, started, tracked = [], emitter, directory, identity, scratch, host = realHost, readTimeout = READ_TIMEOUT }) {
+export async function killRecordedGroup({ group, started, tracked = [], emitter, directory, identity, scratch, settled = false, unended: signProcesses = [], unread = [], onSigns, host = realHost, readTimeout = READ_TIMEOUT }) {
   requireClock(host.clock);
   const { ps, lsof, signal: kill } = host;
-  const starts = await startsIn(ps, group, readTimeout, host);
+  const groupRead = !settled || unread.some(({ kind }) => kind === 'group' || kind === 'dispatch');
+  const starts = groupRead ? await startsIn(ps, group, readTimeout, host) : new Map();
+  const standing = signProcesses.length === 0 ? { tracked: [] } : processSigns(signProcesses, { host, readTimeout });
+  tracked = [...(!settled || unread.some(({ kind }) => kind === 'dispatch') ? tracked : []), ...standing.tracked];
+  const retried = standing.tracked.filter(({ pid }) => sent(pid, 'SIGKILL', kill));
+  const pendingReads = [];
+  const retainRead = (events, matches) => { if (events.some(([event]) => event.endsWith('.unended'))) pendingReads.push(...unread.filter(matches)); };
   const unended = new Map();
   const kills = await swept(undefined, { ps, lsof, readTimeout, kill, host }, 'recorded.killed', new Map(tracked.map(({ pid, started: start }) => [pid, start])), unended);
   kills.push(...[...unended].map(([pid, reason]) => ['recorded.unended', { pid, reason }]));
-  if (recorded(group, started, starts)) kills.push(...(await contain(group, { ps, readTimeout, kill, host }, 'recorded.killed')));
+  retainRead(kills, ({ kind }) => kind === 'dispatch');
+  if (groupRead && recorded(group, started, starts)) {
+    const ended = await contain(group, { ps, readTimeout, kill, host }, 'recorded.killed');
+    retainRead(ended, ({ kind }) => kind === 'group' || kind === 'dispatch');
+    kills.push(...ended);
+  }
   const recordedDirectories = [[directory, identity], ...(scratch === undefined ? [] : [[scratch.path, scratch]])];
   for (const [each, held] of recordedDirectories) {
-    if (each === undefined) continue;
+    if (each === undefined || (settled && !unread.some((sign) => sign.kind === 'dispatch' || sign.directory === each))) continue;
     const replaced = unconfirmed(each, held, host);
-    if (replaced !== undefined) kills.push(['directory.skipped', { directory: each, reason: replaced }]);
-    else kills.push(...(await swept(each, { ps, lsof, readTimeout, kill, host }, 'recorded.killed')));
+    if (replaced !== undefined) {
+      kills.push(['directory.skipped', { directory: each, reason: replaced.reason }]);
+      if (!replaced.gone) pendingReads.push(...unread.filter((sign) => sign.kind === 'dispatch' || sign.directory === each).map((sign) => ({ ...sign, reason: replaced.reason })));
+    }
+    else {
+      const ended = await swept(each, { ps, lsof, readTimeout, kill, host }, 'recorded.killed');
+      retainRead(ended, (sign) => sign.kind === 'dispatch' || sign.directory === each);
+      kills.push(...ended);
+    }
   }
+  for (const member of retried) if (!kills.some(([, fields]) => fields.pid === member.pid) && processSigns([member], { host, readTimeout }).unended.length === 0) kills.push(['recorded.killed', member]);
+  handSigns({ child: { pid: group }, onSigns, unreadSigns: pendingReads, tracked: new Map([...starts, ...tracked.map(({ pid, started }) => [pid, started])]) }, kills);
   const unrecorded = record(emitter, kills);
   if (unrecorded.length > 0) throw refused(unrecorded);
 }
@@ -2399,4 +2425,42 @@ async function outlasts(promise, bound, host = realHost) {
   const outlasted = await Promise.race([promise.then(() => false), passed]);
   stop();
   return outlasted;
+}
+
+/** Hands containment's signs to L1 before a sink can refuse their events. */
+function handSigns(call, events) {
+  if (call.onSigns === undefined) return;
+  const unended = events.filter(([event]) => event.endsWith('.unended')).map(([, fields]) => ({ ...fields, ...(call.tracked?.has(fields.pid) ? { started: call.tracked.get(fields.pid) } : {}) }));
+  const unread = [...(call.unreadSigns ?? []), ...events.flatMap(([event, fields]) => event === 'group.killed' ? [{ kind: 'group', group: fields.group, reason: fields.census }]
+    : event === 'directory.unread' ? [fields.directory === undefined ? { kind: 'dispatch', reason: fields.census } : { kind: 'directory', directory: fields.directory, reason: fields.census }]
+    : event === 'descendants.unread' ? [{ kind: 'dispatch', reason: fields.census }] : [])];
+  if (unended.length > 0 || unread.length > 0) call.onSigns(call.child.pid, { unended, unread });
+}
+
+/** A successful whole-table read alone shows an identity gone; signal answers never do. */
+export function processSigns(processes, { host = realHost, readTimeout = READ_TIMEOUT } = {}) {
+  let rows;
+  try {
+    const args = ['-A', '-o', 'pid=,stat=,lstart='];
+    const answer = host.spawnSync(host.ps, args, { env: PS_ENV, ...reader(readTimeout) });
+    if (answer.error || answer.status !== 0 || answer.stderr !== '') throw new Error('the whole process table could not be read');
+    rows = new Map([...rowsOf(answer.stdout)].map(([pid, row]) => {
+      const fields = /^(\S+)\s+(.*)$/.exec(row);
+      if (!fields) throw new Error('the process state could not be read');
+      let started;
+      try { started = secondsOf(fields[2]); } catch { /* An unreadable identity proves nothing. */ }
+      return [pid, { state: fields[1], started }];
+    }));
+  } catch { return { unended: processes, tracked: [] }; }
+  let unended = processes.filter(({ pid, started }) => {
+    const row = rows.get(pid);
+    return row !== undefined && !row.state.startsWith('Z') && (started === undefined || row.started === undefined || started === row.started);
+  });
+  if (unended.some(({ name, cmd }) => name === undefined || cmd === undefined)) {
+    try {
+      const named = readingNow(described(unended, unended.filter(({ name, cmd }) => name !== undefined && cmd !== undefined)), host.ps, readTimeout, undefined, host.clock.now, host.spawnSync);
+      unended = unended.map((each, at) => ({ ...each, ...named[at] }));
+    } catch { /* A failed name read cannot show an identity gone. */ }
+  }
+  return { unended, tracked: unended.filter(({ pid, started }) => started !== undefined && started === rows.get(pid).started) };
 }

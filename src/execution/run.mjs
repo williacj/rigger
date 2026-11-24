@@ -1,13 +1,15 @@
 // ABOUTME: L1 records each dispatch around L0's process adapter, sweeps its provider folder after
 // L0 settles, and kills groups a dead engine left in its record.
 
-import { realpathSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 import { isAbsolute, join, sep } from 'node:path';
 
-import { addGroup, addTracked, holdsDispatch, partialPath, readGroups, removeGroup, removePartial, writeGroups } from './groups.mjs';
+import { addGroup, addTracked, holdsDispatch, recordPath, partialPath, readGroups, writeGroups } from './groups.mjs';
+import { failedWriteSigns, readPartial, entrySigns, signFailure, settleGroup } from './groups.mjs';
 import { listCliFolder, sweepCliFolder } from './workspace.mjs';
 import { gitEnvironment } from '../substrate/git-environment.mjs';
 import { EVENT_REFUSED, NOT_STARTED, identityOf, killRecordedGroup, runCommand } from '../substrate/process.mjs';
+import { processSigns } from '../substrate/process.mjs';
 import { startFailure } from '../substrate/process.mjs';
 
 /**
@@ -18,74 +20,21 @@ import { startFailure } from '../substrate/process.mjs';
 export const RECORD_REFUSED = 'RECORD_REFUSED';
 
 /**
- * Runs dispatch `id`'s `command` with `args` in `cwd` under exactly `env`, for at most `timeout`
- * milliseconds, and settles on L0's result for it: the exit code `exit`, whether the timeout
- * ended it, and the output as bytes, `stdout` and `stderr`. `input`, where the caller gives it, is
- * written to the command's standard input. `card` is the dispatch's card, where
- * it has one. `directory` is the state directory of the repository the dispatch serves, and `sink`
- * is L5's, through which L1 records the dispatch and L0 what it kills, under this dispatch and its
- * card. `clock` reads milliseconds for the dispatch's duration, and is the process's own unless a
- * test gives one. `host` supplies L0's operating-system answers where a test gives one; `readTimeout` bounds its reads.
+ * Runs one dispatch through L0, pairing every recorded start with its end and preserving the
+ * command's exit code and output through refused events and containment that leaves a sign.
+ * `workspace` and `scratch` identify the dispatch's directories, `folder` its provider folder,
+ * and `facts` and `digest` the evidence L2 composed. A workspace's command inherits `gitEnvironment`.
  *
- * `workspace`, where the caller gives one, is the card's workspace the dispatch runs in, and `cwd`
- * is then its working directory there. `dispatch.start` names the workspace, the command's
- * environment is `env` less every variable that redirects git (`gitEnvironment`), and a `cwd`
- * whose real path lies outside the workspace starts nothing, as a command that never started
- * (the architect's ruling 1, A7 and A8, on #423). Every `dispatch.start` carries the timeout.
+ * The record is checked before its writability probe, after workspace placement and immediately
+ * before L0's synchronous spawn. A sign refuses the command without classing an environment
+ * failure. L0 hands containment signs through `onSigns` before emitting events; L1 retains their
+ * entry even where the sink refuses those events. Each outcome carries the signs still standing.
  *
- * The workspace's real path is the dispatch's directory. L1 hands it to L0, whose census kills
- * every process of Rigger's own user working there once the group is empty, and records it in the
- * entry, so a later start does the same (`ARCHITECTURE.md`, "Failure model"). `scratch`, which
- * `roleDispatch` hands for a role's dispatch and a step's lacks, is the dispatch's scratch
- * directory, and L1 does the same with its real path, recording it in the entry with its device
- * and inode as `scratch` (the architect's ruling 20 on #467). One that cannot be read starts
- * nothing, as a command that never started. A workspace that is
- * an entry's directory, or lies under one, or holds one, starts nothing, as a command that never
- * started, naming the directory. The same L0 host supplies the directory-census tool where a test gives one.
- *
- * For a role's dispatch, `roleDispatch` also hands `facts`, the facts L2 attached to identify the
- * work, and `digest`, a digest of the evidence L2 composed, and `dispatch.start` carries each it is
- * given as given (`ARCHITECTURE.md`, "Telemetry").
- * It may also hand `folder`, the adapter's `{ home, name }` for a CLI session folder under
- * `<home>/projects/`. L1 lists it before L0 starts the command and removes only paths absent from
- * that listing once L0 settles. `dispatch.end` names paths or a reason in `folderLeft` only where
- * a sweep left something or could not safely run.
- *
- * The order is fixed (the architect's ruling 2, §4, on #332): L1 appends `dispatch.start`; shows
- * the record writable; has L0 spawn the command, and writes the entry; L0 runs the command, kills
- * what is left of its group, and settles; L1 removes the entry, appends `dispatch.timeout` where
- * the timeout ended the command, then `dispatch.end`, and settles. Every start L1 records gets
- * exactly one end, which carries the exit code and the duration where the command ran, and why it
- * did not start where it never did.
- *
- * On Rigger's own exit before L1 has recorded the end, whether the command is still running or has
- * exited while the call is in flight, the order is L0's exit cleanup's: L0 kills what is left of
- * the group and records each kill; L1 removes the entry and appends `dispatch.end`, carrying the
- * exit code L0 hands it, which is the command's own where it had exited. Where L0 could not read
- * the command's status, the end carries no exit code, and says as `unread` why. Where the record
- * refuses the removal, the end still goes, saying as `kept` which entry was kept and why, and so it
- * does where L0 left the group's directories unsearched, whose entry L1 keeps for the next start
- * (`R-STATE-28`). The sink's
- * refusal of that end has no caller left to reach, so L0 writes it to standard error, on a line
- * naming the event, the dispatch and its card. A process kept running past its ending has the call
- * settle as before, and records nothing more of the dispatch.
- *
- * A refused start starts nothing, and the call rejects with an `EVENT_REFUSED` failure naming it.
- * A command that never started rejects with a `NOT_STARTED` failure, a state directory whose
- * record cannot be written included. Where the sink refuses the timeout or the end, every append is
- * still tried, and the call rejects with an `EVENT_REFUSED` failure naming the dispatch, its card
- * and each unrecorded event, carrying the result where the command ran. L0's own refusal takes
- * those events onto it; any other failure becomes the refusal's `cause`.
- *
- * While the command runs, the record in `directory` holds an entry naming its process group, the
- * dispatch and the card (`ARCHITECTURE.md`, "Failure model"). The entry is removed once L0 has
- * emptied the group, which it has done when it settles, or rejects naming a refused event, and on
- * Rigger's own exit, once L0's exit cleanup has killed the group. Any other rejection leaves the
- * entry it wrote, and so does an ending that runs no code, for a later start to settle. Where the record
- * refuses the removal after a refused event, the refusal still reaches the caller, carrying the
- * record's failure as `recordFailure`. Where it refuses the removal after the command settled, the
- * call rejects with a `RECORD_REFUSED` failure carrying the result, and the record's failure as
- * `recordFailure`.
+ * Once whole containment settles, an entry without a sign goes; one kept for its signs is marked
+ * `settled`. Exit cleanup past its budget keeps the entry unmarked. `dispatch.end.kept` describes
+ * an unsearched directory or a record write refused, not ordinary sign retention. Provider-folder
+ * sweeping and event refusals preserve the command result as before. ARCHITECTURE.md, "Signs of
+ * an earlier dispatch's process", owns the ordering and removal conditions.
  */
 export async function dispatch({ id, card, directory, sink, provider, command, args, input, cwd, workspace, scratch, env, folder, timeout, facts, digest, host, readTimeout, clock = () => performance.now() }) {
   // L3 allocates the id (the architect's ruling 1, P4 on #332), and an entry without one could
@@ -103,15 +52,17 @@ export async function dispatch({ id, card, directory, sink, provider, command, a
     throw refused(id, card, [{ event: 'dispatch.start', ...start, cause }]);
   }
   let recorded;
+  let attemptedEntry;
   let folderListing;
   let result;
   let failure;
+  let containmentSigns;
   // Whether L1 has recorded the dispatch's end, or is about to in the step it is taking.
   let ended = false;
   try {
     // The record is shown writable before anything starts, by writing it back as it stands, so a
     // dispatch whose group could not be recorded runs no command.
-    const entries = startingGroups(directory);
+    const entries = startingGroups(directory, { host, readTimeout });
     try {
       writeGroups(directory, entries);
     } catch (cause) {
@@ -119,13 +70,14 @@ export async function dispatch({ id, card, directory, sink, provider, command, a
     }
     // The dispatch's directory, its workspace's real path, as the record names it and L0's census
     // of it compares.
-    const { escape, place, identity, startCause } = workspace === undefined ? {} : placed(cwd, workspace, directory);
+    const { escape, place, identity, startCause } = workspace === undefined ? {} : dispatchPlacement(cwd, workspace, directory);
     if (escape !== undefined) throw Object.assign(new Error(`dispatch ${id} did not start ${command}: ${escape}`), { code: NOT_STARTED, startCause });
     // A role's scratch directory, by its real path, device and inode, as the record names it and
     // L0's census of it compares (the architect's ruling 20 on #467).
     const { unread, held } = scratch === undefined ? {} : scratchHeld(scratch);
     if (unread !== undefined) throw startFailure(Object.assign(new Error(`dispatch ${id} did not start ${command}: ${unread}`), { code: NOT_STARTED }), 'directory-unusable');
     if (folder !== undefined) folderListing = listCliFolder(folder);
+    startingGroups(directory, { host, readTimeout });
     result = await runCommand({
       command,
       args,
@@ -155,13 +107,21 @@ export async function dispatch({ id, card, directory, sink, provider, command, a
         // dispatch's processes, so a restart could find them without the record. #335 read the
         // marker only from binaries that are not Apple's, and every survivor the Claude CLI left
         // was one of Apple's (`docs/spikes/what-leaves-the-process-group.md`).
-        addGroup(directory, { group, started, dispatch: id, card, ...(place === undefined ? {} : { workspace: place, ...identity }), ...(held === undefined ? {} : { scratch: held }) });
+        attemptedEntry = { group, started, dispatch: id, card, ...(place === undefined ? {} : { workspace: place, ...identity }), ...(held === undefined ? {} : { scratch: held }) };
+        addGroup(directory, attemptedEntry);
         recorded = group;
       },
       // Each process L0's tracker adds is named in the entry, so a later start ends it after Rigger
       // was killed outright or its exit ran past its budget. A rewrite that fails leaves it
       // tracked in L0's memory alone ("Failure model").
-      onTracked: (group, added) => addTracked(directory, group, added),
+      onTracked: (group, added) => addTracked(directory, group, added, { host, readTimeout }),
+      onSigns: (group, signs) => {
+        containmentSigns = signs;
+        if (recorded === undefined && attemptedEntry !== undefined) {
+          try { writeGroups(directory, [...readGroups(directory), { ...attemptedEntry, ...signs, settled: true }], { host, readTimeout }); }
+          catch { /* The writer retains the omitted processes in its failed-write memory. */ }
+        }
+      },
       // On Rigger's own exit, L0 kills and records the group, and then hands it here with how the
       // command ended, its exit code or why its status could not be read, to remove its entry and
       // record the dispatch's end, which says why the entry was kept where the record refused its
@@ -175,7 +135,7 @@ export async function dispatch({ id, card, directory, sink, provider, command, a
         if (folder !== undefined) fields.folderLeft = [unsweptFolder(folder, folderListing, 'Rigger exited before the CLI folder sweep')];
         try {
           // A group L0 killed bare has directories nothing swept, so the next start's kill needs its entry.
-          if (unswept === undefined) removeGroup(directory, group);
+          if (unswept === undefined) settleGroup(directory, group, containmentSigns);
           else fields.kept = keptEntry(directory, group, { message: unswept });
         } catch (cause) {
           fields.kept = keptEntry(directory, group, cause);
@@ -202,14 +162,12 @@ export async function dispatch({ id, card, directory, sink, provider, command, a
     return result;
   }
   ended = true;
-  // L0 settles, or rejects with `EVENT_REFUSED`, only once it has emptied the group, so the entry
-  // goes. Any other rejection leaves the entry, because L0 has not said the group is empty, and a
-  // later start settles it. A removal the record refuses after a refused event rides on the
-  // refusal rather than replacing it, so the caller still learns which events went unrecorded.
-  // One the record refuses after the command settled carries the result, because the command ran.
+  // Whole containment keeps only the dispatch's remaining signs. A failure before containment
+  // settles keeps the running entry for the next start. A refused rewrite accompanies the
+  // original event refusal, or carries the result where the command ran.
   if (recorded !== undefined && (failure === undefined || failure.code === EVENT_REFUSED)) {
     try {
-      removeGroup(directory, recorded);
+      settleGroup(directory, recorded, containmentSigns);
     } catch (recordFailure) {
       const kept = keptEntry(directory, recorded, recordFailure);
       if (failure === undefined) {
@@ -242,6 +200,11 @@ export async function dispatch({ id, card, directory, sink, provider, command, a
   const folderFields = folderLeft.length === 0 ? {} : { folderLeft };
   record('dispatch.end', result === undefined ? { reason: failure.message, ms, ...folderFields } : { exit: result.exit, ms, ...folderFields });
   if (unrecorded.length > 0) failure = alongside(failure, refused(id, card, unrecorded, result));
+  const signs = failure?.signs ?? signsStanding(directory, { host, readTimeout });
+  if (signs.length > 0) {
+    if (failure !== undefined) failure.signs = signs;
+    else result = { ...result, signs };
+  }
   if (failure !== undefined) throw failure;
   return result;
 }
@@ -283,7 +246,7 @@ function escapes(cwd, workspace) {
  * that it lies under, or that lies under it. L0's census of either would end the other's processes
  * (`ARCHITECTURE.md`, "Failure model"). Paths are compared by real path, as `escapes` compares them.
  */
-function placed(cwd, workspace, directory) {
+function dispatchPlacement(cwd, workspace, directory) {
   const escape = escapes(cwd, workspace);
   if (escape !== undefined) return escape;
   let place;
@@ -301,11 +264,15 @@ function placed(cwd, workspace, directory) {
 }
 
 /** Reads the groups before a dispatch starts, including a reread after the writability check. */
-function startingGroups(directory) {
+function startingGroups(directory, options = {}) {
   try {
-    return readGroups(directory);
+    const entries = readGroups(directory);
+    const signs = [...entrySigns(entries), ...failedWriteSigns(directory, options)];
+    if (signs.length > 0) throw signFailure(signs);
+    return entries;
   } catch (cause) {
-    throw startFailure(Object.assign(new Error(`L1 cannot read its record of process groups in ${directory}, so the dispatch did not start: ${cause.message}`, { cause }), { code: NOT_STARTED }), 'groups-unreadable');
+    if (cause.signs !== undefined) throw cause;
+    throw signFailure([{ kind: 'record', path: recordPath(directory), reason: cause.message }]);
   }
 }
 
@@ -362,63 +329,54 @@ function refused(id, card, unrecorded, result) {
 }
 
 /**
- * Ends what a dead engine left: each process group the record in `directory` names, where L0
- * confirms the group is the one recorded, recording each kill through `sink` under the entry's
- * dispatch and card (`ARCHITECTURE.md`, "Failure model"), and where the entry names the dispatch's
- * directory, every process working there. `host` supplies L0's operating-system answers and `readTimeout` bounds its reads
- * where the caller gives them.
- *
- * A record that cannot be read as entries fails whole, naming its file, before anything is killed.
- * Every entry is tried whatever became of those before it. Afterwards the record keeps only the
- * entries whose group L0 could not confirm, because a later start may: L0 has confirmed every
- * other group empty, killed it, or found it is not the one recorded. The call then rejects naming
- * each entry it kept and each kill the sink refused, with its dispatch id and card. A group whose
- * kill went unrecorded is dead, so its entry goes too: keeping it would record nothing later
- * (the architect's ruling 2, §5, on #332). Where the record then refuses its rewrite, that
- * failure is added to the rejection and carried on it as `recordFailure`.
- *
- * Once every entry has been acted on, the partial file a writer stopped before its rename left
- * beside the record goes, because `.rigger/` holds no file but the three things `ARCHITECTURE.md`
- * names ("Failure model"). Where it cannot be removed, the call appends an L1 `record.partial-kept`
- * event naming it and why, and fails on that alone only where the sink refuses the event.
+ * Reaps a previous run's record, reading both it and an unfinished write before acting on either.
+ * Every entry is tried. Settled entries owe only their signs; the rest owe their whole cleanup.
+ * A successful rewrite retains only outstanding signs and entries whose group was unconfirmed.
+ * An unreadable file is untouched and kills nothing. A surviving sign refuses all work at this
+ * start. ARCHITECTURE.md, "Signs of an earlier dispatch's process", gives the start's steps.
  */
 export async function killRecordedGroups({ directory, sink, host, readTimeout }) {
-  const entries = readGroups(directory);
-  let failure;
+  let entries;
+  let partial;
+  let path = recordPath(directory);
   try {
-    await killEntries({ directory, sink, host, readTimeout, entries });
-  } catch (thrown) {
-    failure = thrown;
-  }
-  // The partial file goes once every entry has been acted on, so one that cannot be removed stops
-  // no kill. Its removal is not the start's to fail on, because nothing reads it: the call records
-  // why it stayed, and fails only where the sink refuses that.
-  try {
-    removePartial(directory);
-  } catch (cause) {
-    const kept = { path: partialPath(directory), reason: cause.message };
-    try {
-      sink.emitter({ layer: 'L1' }).emit('record.partial-kept', kept);
-    } catch (refusal) {
-      const unrecorded = `the sink refused L1's record.partial-kept ${JSON.stringify(kept)}, so it went unrecorded: ${refusal.message}`;
-      if (failure === undefined) failure = new Error(unrecorded);
-      else failure.message += `\nand ${unrecorded}`;
+    entries = readGroups(directory);
+    path = partialPath(directory);
+    if (existsSync(path)) partial = readPartial(directory);
+  } catch (cause) { throw signFailure([{ kind: 'record', path, reason: cause.message }]); }
+  if (partial !== undefined) {
+    for (const added of partial) {
+      const at = entries.findIndex((entry) => entry.group === added.group);
+      if (at < 0) entries.push(added);
+      else {
+        const entry = entries[at];
+        entries[at] = { ...entry, ...added };
+        for (const field of ['tracked', 'unended', 'unread']) if (entry[field] !== undefined || added[field] !== undefined) entries[at][field] = [...new Map([...(entry[field] ?? []), ...(added[field] ?? [])].map((each) => [JSON.stringify(each), each])).values()];
+      }
     }
   }
-  if (failure !== undefined) throw failure;
+  try { await killEntries({ directory, sink, host, readTimeout, entries, partial }); }
+  catch (failure) {
+    if (partial !== undefined && failure.signs !== undefined) {
+      failure.signs.push({ kind: 'write', path: recordPath(directory), reason: 'an unfinished write named processes not shown gone' });
+      failure.message = signFailure(failure.signs).message;
+    }
+    throw failure;
+  }
 }
 
 /** Acts on each of the record's `entries`, as `killRecordedGroups` says. */
-async function killEntries({ directory, sink, host, readTimeout, entries }) {
-  if (entries.length === 0) return;
+async function killEntries({ directory, sink, host, readTimeout, entries, partial }) {
+  if (entries.length === 0 && partial === undefined) return;
   const kept = [];
   const unconfirmed = [];
   const unrecorded = [];
   for (const entry of entries) {
     const { group, started, dispatch, card, workspace, device, inode, scratch, tracked } = entry;
     const under = named(dispatch, card);
+    let observed = {};
     try {
-      await killRecordedGroup({ group, started, tracked, directory: workspace, identity: { device, inode }, scratch, host, readTimeout, emitter: sink.emitter({ layer: 'L0', card, dispatch }) });
+      await killRecordedGroup({ group, started, tracked, settled: entry.settled, unended: entry.unended, unread: entry.unread, onSigns: (_group, signs) => { observed = signs; }, directory: workspace, identity: { device, inode }, scratch, host, readTimeout, emitter: sink.emitter({ layer: 'L0', card, dispatch }) });
     } catch (failure) {
       if (failure.code !== EVENT_REFUSED) {
         kept.push(entry);
@@ -427,6 +385,10 @@ async function killEntries({ directory, sink, host, readTimeout, entries }) {
       }
       for (const { event, cause, ...fields } of failure.unrecorded) unrecorded.push(`${under}: ${event} ${JSON.stringify(fields)}: ${cause.message}`);
     }
+    const candidates = [...(entry.unended ?? []), ...(observed.unended ?? [])];
+    const unended = candidates.length === 0 ? [] : processSigns([...new Map(candidates.map((each) => [each.pid, each])).values()], { host, readTimeout }).unended;
+    const unread = observed.unread ?? [];
+    if (unended.length + unread.length > 0) kept.push({ ...entry, settled: true, unended, unread });
   }
   const failures = [];
   if (unconfirmed.length > 0) failures.push(`L1 could not confirm ${unconfirmed.length} recorded group(s) as the one recorded, so it killed nothing in them and kept their entries:`, ...unconfirmed);
@@ -441,5 +403,16 @@ async function killEntries({ directory, sink, host, readTimeout, entries }) {
     recordFailure = cause;
     failures.push(`and the record of process groups in ${directory} was not rewritten, so it still holds every entry it held: ${cause.message}`);
   }
-  if (failures.length > 0) throw Object.assign(new Error(failures.join('\n')), { recordFailure });
+  const signs = entrySigns(kept);
+  if (signs.length > 0) failures.push(signFailure(signs).message);
+  if (failures.length > 0) throw Object.assign(new Error(failures.join('\n')), { recordFailure, ...(signs.length > 0 ? { signs } : {}) });
+}
+
+/** L1's synchronous read at a claim or after a dispatch, including an unreadable record itself. */
+export function signsStanding(directory, options = {}) {
+  try {
+    return [...entrySigns(readGroups(directory).map((entry) => ({ ...entry, unended: entry.unended?.length > 0 ? processSigns(entry.unended, options).unended : [] }))), ...failedWriteSigns(directory, options)];
+  } catch (cause) {
+    return [{ kind: 'record', path: recordPath(directory), reason: cause.message }];
+  }
 }

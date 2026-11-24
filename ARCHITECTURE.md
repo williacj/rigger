@@ -2364,7 +2364,7 @@ an earlier dispatch's process"). It names no card and no dispatch. L3 gives it o
 
 | `kind` | The sign | Its other fields (`R-STATE-37`) |
 |---|---|---|
-| `process` | a process Rigger could not end | `pid`, `name`, and `cmd`, its command line |
+| `unended` | a process Rigger could not end | `pid`, `name`, and `cmd`, its command line |
 | `read` | a group, directory or dispatch recorded in place of processes Rigger could not read | `group`, `directory` or `dispatch`, naming what it read, and `reason`, why the read failed |
 | `record` | a record Rigger cannot read, or a write of it whose file Rigger cannot read | `path`, the path of the file it cannot read, and `reason` |
 | `write` | a write of the record that failed or did not complete | `path`, the record's path, and `reason` |

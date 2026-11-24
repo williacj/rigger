@@ -1368,6 +1368,12 @@ function answeringHost(t, answer, clock) {
       return { status: 0, stdout: 'Sun Nov  1 21:00:00 2026\n', stderr: '' };
     },
     execFile(tool, _args, _options, done) {
+      // ps(1)'s successful empty whole-table answer; these completed commands leave no descendants.
+      if (tool === realHost.ps) {
+        assert.deepEqual(_args, ['-A', '-o', 'pid=,ppid=,pgid=,lstart=']);
+        queueMicrotask(() => done(null, '', ''));
+        return { stdout: { destroy() {} }, stderr: { destroy() {} } };
+      }
       assert.equal(tool, realHost.lsof, 'completed commands leave an empty directory census');
       queueMicrotask(() => done(null, '', ''));
       return { stdout: { destroy() {} }, stderr: { destroy() {} } };

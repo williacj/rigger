@@ -838,3 +838,137 @@ export function trackerWorld(clock, group = 900_000_010, table = new Map()) {
   return { group, escaped, table, host, reads, signals, events, finish,
     inject: (next) => { fault = next; }, emitter: { emit: (event, fields) => events.push({ event, ...fields }) } };
 }
+
+/** A real L2/L3 loop over the shared forge and process-table doubles, with no executable agent. */
+export async function signLoopWorld(t, { numbers = [10, 11], concurrency = 1, settings, observe = () => {}, accepted = () => {}, beforeWorkspace } = {}) {
+  const { minimalConfig } = await import('./optional-config.mjs');
+  const { pullFor } = await import('./judge-world.mjs');
+  const { card } = await import('./verb-consumer.mjs');
+  const { createFakeBoard } = await import('./fake-board.mjs');
+  const { handleOn } = await import('./loop-world.mjs');
+  const { createFakeRepository } = await import('./fake-repository.mjs');
+  const { repositoryAt, gitIn } = await import('./git-repository.mjs');
+  const { manualClock } = await import('./clock-report-world.mjs');
+  const { nextAction } = await import('../src/workflow/next-action.mjs');
+  const { columnChanges } = await import('../src/workflow/transitions.mjs');
+  const { factsCall } = await import('../src/workflow/facts.mjs');
+  const { loop } = await import('../src/scheduling/loop.mjs');
+  const { killRecordedGroups } = await import('../src/execution/run.mjs');
+  const { openSink, readEvents, streamPath } = await import('../src/observation/sink.mjs');
+  const root = realpathSync.native(temporaryDirectory('rigger-sign-loop-', { context: t }));
+  const config = { ...(settings ?? minimalConfig()), concurrency };
+  const fake = createFakeBoard({ columns: Object.values(config.board.columns), items: numbers.map((n) => typeof n === 'number' ? card(n, 'Ready') : n) });
+  const repository = createFakeRepository({ repo: config.repo, issues: fake.issues() });
+  const main = repositoryAt(join(root, 'repository'), { README: 'Controlled sign fixture.\n' });
+  const tip = gitIn(main, 'rev-parse', 'HEAD').trim();
+  const state = join(main, '.rigger');
+  const clock = manualClock(0);
+  // Workspace git calls use L0's default host; their scheduling uses this same injected clock.
+  const { realHost } = await import('../src/substrate/host.mjs');
+  const originals = new Map(['clock', 'signal'].map((key) => [key, Object.getOwnPropertyDescriptor(realHost, key)]));
+  Object.defineProperty(realHost, 'clock', { configurable: true, value: { ...clock, pause: async (delay) => clock.advance(clock.now() + delay) } });
+  Object.defineProperty(realHost, 'signal', { configurable: true, value: () => { throw Object.assign(new Error('controlled git group is absent'), { code: 'ESRCH' }); } });
+  const table = new Map();
+  const base = trackerWorld(clock, 900_010_000, table);
+  const models = [];
+  const signals = [];
+  const events = () => existsSync(streamPath(state)) ? readEvents(state) : [];
+  const real = openSink({ directory: state, run: 'r-sign', now: clock.now });
+  let refusal;
+  const sink = { emitter: (context) => ({ emit: (event, fields = {}) => {
+    observe({ ...context, event, ...fields });
+    if (refusal === event) throw new Error(`controlled sink refuses ${event}`);
+    real.emitter(context).emit(event, fields);
+    accepted({ ...context, event, ...fields });
+  } }) };
+  const host = { ...base.host,
+    spawn(command, args, options) {
+      assert.ok(models.length < 12, 'fixture guard: too many dispatch commands');
+      const model = trackerWorld(clock, 900_020_000 + models.length * 100, table);
+      const child = model.host.spawn();
+      child.stdin = Object.assign(new EventEmitter(), { end() {} });
+      const began = events().filter(({ event }) => event === 'dispatch.start').at(-1);
+      const dispatch = events().find((event) => event.event === 'dispatch' && event.dispatch === began.dispatch);
+      models.push(Object.assign(model, { command, args, options, dispatch }));
+      return child;
+    },
+    signal(target, name) {
+      if (name !== 0) signals.push({ target, name });
+      return (models.find(({ group }) => group === -target) ?? base).host.signal(target, name);
+    },
+  };
+  const l2 = columnChanges({ config, sink, items: fake.operations, reads: repository.operations, repositoryWrites: {
+    postComment: repository.postComment, mergePullRequest: repository.mergePullRequest,
+    postIssueComment: repository.postIssueComment, addIssueLabel: repository.addIssueLabel,
+  } });
+  const decide = (card, outcomes, options = {}) => nextAction(card, config.kinds, undefined, { roles: config.roles, provisioning: config.provisioning ?? {}, outcomes, sink, ...options });
+  const facts = factsCall({ config, reads: repository.operations, decide });
+  const workspace = async (number) => {
+    await beforeWorkspace?.(number);
+    const path = join(root, `work-${number}`);
+    mkdirSync(join(path, '.claude', 'agents'), { recursive: true });
+    for (const role of Object.keys(config.roles)) writeFileSync(join(path, config.roles[role].agent), '# Role\nDo the work.\n');
+    return { path, branch: `rigger-${number}`, scratch: join(root, 'scratch', String(number)), repository: main };
+  };
+  const engine = loop({ config, board: { ...handleOn(fake, { columns: config.board.columns }), readItems: fake.operations.readItems }, decide, facts: async (...args) => {
+    assert.ok(events().filter(({ event }) => event === 'pull').length < 8, 'fixture guard: repeated claims');
+    return facts(...args);
+  }, l2, sink, kill: () => killRecordedGroups({ directory: state, sink, host }), workspace, workspaceTip: () => tip,
+    judgeDirectory: async (number, role) => { const made = await workspace(`${number}-${role}`); return { ...made, main: made.path, head: made.path }; },
+    escalationDirectory: async (number, role) => { const made = await workspace(`${number}-${role}`); return { ...made, main: made.path }; },
+    removeDirectories: async () => {}, state, readRecord: events, environment: { HOME: root, CLAUDE_CONFIG_DIR: join(root, 'home') }, run: 'r-sign', host, clock });
+  let running;
+  let completed = false;
+  let failure;
+  const start = () => { completed = false; failure = undefined; running = engine.run(); running.then(() => { completed = true; }, (error) => { completed = true; failure = error; }); return running; };
+  t.after(async () => {
+    while (running && !completed) { for (const model of models) model.finish(3); await new Promise((done) => setImmediate(done)); }
+    for (const row of table.values()) row.state = 'Z';
+    for (const [key, descriptor] of originals) Object.defineProperty(realHost, key, descriptor);
+  });
+  return { root, state, consumer: main, config, clock, table, host, models, signals, events, sink, repository, fake, l2, engine, start, tip,
+    completed: () => completed, failure: () => failure, inject: base.inject, refuse: (event) => { refusal = event; },
+    open: (number) => repository.open({ ...pullFor(number), sha: tip }),
+  };
+}
+
+/** Runs the public verb over signLoopWorld's controlled processes and the existing fake forge. */
+export async function signVerbWorld(t, options = {}) {
+  const world = await signLoopWorld(t, options);
+  const { forgeStore } = await import('./in-process-fixtures.mjs');
+  const { seedRepositoryAt } = await import('./fake-gh.mjs');
+  const { gitIn, withOrigin } = await import('./git-repository.mjs');
+  const { gitEnvironment } = await import('../src/substrate/git-environment.mjs');
+  const { run } = await import('../src/cli/run.mjs');
+  const { realHost } = await import('../src/substrate/host.mjs');
+  writeFileSync(join(world.consumer, 'rigger.config.mjs'), `export default ${JSON.stringify(world.config)};\n`);
+  mkdirSync(join(world.consumer, '.claude', 'agents'), { recursive: true });
+  for (const role of Object.values(world.config.roles)) writeFileSync(join(world.consumer, role.agent), '# Role\nDo the work.\n');
+  gitIn(world.consumer, 'add', 'rigger.config.mjs', '.claude');
+  gitIn(world.consumer, 'commit', '-qm', 'fixture');
+  gitIn(world.consumer, 'branch', '-M', 'main');
+  withOrigin(world.consumer, join(world.root, 'origin.git'));
+  const statePath = join(world.root, 'verb-board.json');
+  const items = (await world.fake.operations.readItems()).map(({ id, ...item }) => item);
+  writeFileSync(statePath, JSON.stringify({ repo: world.config.repo, owner: 'acme', project: 3, origin: join(world.root, 'origin.git'),
+    model: { columns: Object.values(world.config.board.columns), fields: [], items }, writes: [], sent: [] }));
+  seedRepositoryAt(statePath, world.repository.held());
+  const store = forgeStore(statePath);
+  const controller = new AbortController();
+  const originals = new Map(['spawn', 'spawnSync', 'execFile', 'signal', 'killChild', 'clock', 'ps', 'lsof'].map((key) => [key, Object.getOwnPropertyDescriptor(realHost, key)]));
+  const native = realHost.spawn;
+  let running;
+  let ended = false;
+  const text = [];
+  const startVerb = () => {
+    for (const key of originals.keys()) Object.defineProperty(realHost, key, { configurable: true, value: key === 'spawn'
+      ? (command, args, given) => command === 'git' ? native(command, args, given) : world.host.spawn(command, args, given) : world.host[key] });
+    running = run({ target: world.consumer, host: world.host, clock: world.clock, stop: controller.signal,
+      ask: (command, args) => { assert.equal(command, 'git'); return rawSpawnSync(command, args, { encoding: 'utf8', env: gitEnvironment() }); },
+      send: (command, args) => { assert.equal(command, 'gh'); return store.answer(args); }, write: (line) => text.push(line),
+    }).finally(() => { ended = true; for (const [key, descriptor] of originals) Object.defineProperty(realHost, key, descriptor); });
+    return running.then((result) => ({ ...result, text: [...text, result.text].join('\n') }));
+  };
+  t.after(async () => { controller.abort(); while (running && !ended) { for (const model of world.models) model.finish(3); await new Promise((done) => setImmediate(done)); } });
+  return { ...world, startVerb, verbEnded: () => ended };
+}
