@@ -65,7 +65,7 @@ and assertion.
 | S2 | This repository's journal entries at a0f5a970 | 2026-11-24T17:44:00Z to 17:48:09Z (runs 022, 024) | entries named 2026-09-22 to 2026-11-24 (run 030) |
 | S3 | This repository's issue and pull request comments | 2026-11-24T17:42:16Z to 17:43:39Z (run 019) | 2026-08-14T23:58:46Z to 2026-11-24T17:41:19Z (run 019) |
 | S4 | #1429's published evidence at a0f5a970, for the two times quoted under "The line proposed" | 2026-11-24T21:20:42Z (run 038) | 2026-11-20T00:47Z to 00:48Z |
-| S5 | The maker's own session record, for the script texts and commands the recorder did not keep | 2026-11-24T21:20:41Z (run 036) and 2026-11-24T21:20:42Z to 2026-11-24T21:20:55Z (runs 037, 043) | this spike's phases, 2026-11-24 |
+| S5 | The maker's own session record, for the script texts and commands the recorder did not keep | 2026-11-24T21:20:41Z to 2026-11-24T21:20:55Z (runs 036, 037, 043) and 2026-11-24T21:34:24Z (runs 044, 045) | this spike's phases, 2026-11-24 |
 
 S4 gives two times and no count. S5 gives no count and no figure. S3 was read again by comment at 2026-11-24T21:20:42Z to 2026-11-24T21:20:44Z (runs 039, 040, 042).
 
@@ -386,25 +386,44 @@ The extract the Emend counts ran over is p1.
 | 034's one child, the tests over the unedited text | repeated by 035's | p30 |
 | 035 | the mutation run, repeated after that fix, with every child's output kept | p31 |
 | 035's children | the unedited text (p32); edits 1 to 32, each failing as meant (p33 to p64, in the order of `docs/spikes/engine-deaths/mutation-evidence.txt`); the text restored (p65) | p32 to p65 |
-| 037 | the first print of the unrecorded commands, whose text left an id and a scratch path unmasked | p66 |
-| 043 | that print, repeated with both masked | p67 |
+| 036 | the recovery of the script texts, which wrongly went on to number later runs | p66 |
+| 044 | that recovery, repeated and stopped at run 032 | p67 |
+| 037 and 043 | prints of the unrecorded commands; 037 left an id and a scratch path unmasked, and 043 the archive's path | not kept: see below |
+| 045 | that print, repeated with them masked | published whole as `docs/spikes/engine-deaths/session-commands.txt` |
 
-Runs 016, 017, 019, 024, 025, 027 to 030, 032, 036 and 038 to 042 ran once and did not fail. Runs 026, 031 and 033 do not
+Runs 016, 017, 019, 024, 025, 027 to 030, 032, 038 to 042 and 046 ran once and did not fail. Runs 026, 031 and 033 do not
 exist, because the recorder counts the files in its output directory, and some had been added there by hand.
 
-**What cannot be recovered.** Runs 005, 007, 009, 013 and 015 each ran the tests once per edit. `docs/spikes/engine-deaths/source/mutants.sh` sent each child's
-output to a temporary file and printed one line for it, and the maker deleted those files. Those children failed as they
-were meant to, or survived, and **their full outputs no longer exist**. p10, p12, p14, p18 and p20 hold the printed lines
-alone. No claim rests on them: run 035 repeated the last of the five, with every output kept. A few ad-hoc look-ups and
-checks also failed, and their outputs were not kept. Nothing rests on them. They are:
+Runs 037 and 043 printed text copied from the maker's session record, which rule 7 bars as private material. Their outputs were removed from
+the archive for that, on the coordinator's word. Run 045 repeated them, and its whole output is the published file.
 
-- the last part of the call that made run 027, which read a file that did not exist;
-- a `grep` the shell refused for its pattern;
-- a run of the reference check with a wrong argument.
+### What cannot be recovered
+
+**The maker deleted evidence that the card required it to keep. That is a defect of this spike.** The owner's standing rule
+on unrecoverable gaps ([1453#7087640218](https://github.com/williacj/rigger/issues/1453#issuecomment-7087640218)) asks for each
+to be listed exactly. They are these:
+
+1. **The full output of every child test run of five mutation runs, 113 in all** (run 046 counts the printed lines): run 005, 16
+   children; run 007, 16; run 009, 17; run 013, 32; run 015, 32. Each child ran the tests over one edit, named in that run's
+   version of the mutation script: versions 1, 1, 2, 3 and 3. The script sent each child's output to a temporary file, and the
+   maker deleted those files before any ruling. Each run's own printed lines, one a child, are p10, p12, p14, p18 and p20.
+   Three children of run 005, one of run 007 and one of run 013 survived, and the others failed as they were meant to.
+   **No claim rests on them.** Run 035 ran the 32 edits of version 3 again, with every output kept.
+2. **The output of these unrecorded commands, which failed or found nothing, and whose output was not kept.** Nothing rests
+   on them, and each time is the call's, in UTC, on 2026-11-24:
+   - the process listing that ended the timing call, at 17:22:24, which found no process and exited 1;
+   - a listing of a pattern that matched nothing, at 17:27:13, and two more while the second commit was made and after it;
+   - the last part of the call at 17:48:54, which read a file that did not exist;
+   - a `grep` at 17:50:20, which the shell refused for its pattern;
+   - a look-up of a comment at 17:51:01, under a number that is none, whose output was discarded;
+   - a run of the reference check with a wrong argument, at 17:52:21;
+   - a look through the session record at 21:14:41, which ended in an error.
+
+Every other run that failed, was abandoned or was repeated is in the table above.
 
 ### Script versions
 
-Each earlier text came from the maker's session record. Run 036 applied the file-writing parts of the maker's own tool
+Each earlier text came from the maker's session record. Run 044 applied the file-writing parts of the maker's own tool
 calls, as that record holds them, in an empty directory. It typed nothing from memory. `docs/spikes/engine-deaths/versions.txt` gives the
 text each of runs 001 to 032 had beside it, by version and sha256. Three checks bear on it:
 
@@ -413,15 +432,18 @@ text each of runs 001 to 032 had beside it, by version and sha256. Three checks 
   them without the maker: the command's, which the privacy checker passed.
 - The texts between two such are fixed by the recorded edits that join them.
 
-Run 034 ran the mutation script as `docs/spikes/engine-deaths/source/versions/mutation.mjs.v1.txt`, and run 035 as the text under
-`docs/spikes/engine-deaths/source/`. Run 037 ran the command-printing script as `docs/spikes/engine-deaths/source/versions/session.py.v1.txt`, and run
-043 as the text under `docs/spikes/engine-deaths/source/`. In both, a placeholder stands for one device's name, which the script
-masks. Runs 038 to 042 ran the published texts or no script. From run 016 on, the recorder is
-`docs/spikes/engine-deaths/source/rec.sh`.
+Run 036 ran the recovery script as `docs/spikes/engine-deaths/source/versions/recover.py.v1.txt`, and run 044 as the text under
+`docs/spikes/engine-deaths/source/`. Run 034 ran the mutation script as `docs/spikes/engine-deaths/source/versions/mutation.mjs.v1.txt`, and run 035 as the text under
+`docs/spikes/engine-deaths/source/`. Runs 037 and 043 ran the command-printing script as `docs/spikes/engine-deaths/source/versions/session.py.v1.txt` and
+`docs/spikes/engine-deaths/source/versions/session.py.v2.txt`, and run 045 as the text under `docs/spikes/engine-deaths/source/`. In all three, a
+placeholder stands for one device's name, which the script masks. Runs 038 to 042 and 046 ran the published texts or no script. The
+recorder was `docs/spikes/engine-deaths/source/versions/rec.sh.v1.txt` to run 015,
+`docs/spikes/engine-deaths/source/versions/rec.sh.v2.txt` from run 016 to run 043, and `docs/spikes/engine-deaths/source/rec.sh` from run 044.
 
 Commands the recorder did not run, and no figure rests on them: a timing of the first version, Python look-ups in the public
-records, the abandoned search, and the commits. They are whole in `docs/spikes/engine-deaths/session-commands.txt`, from the
-session record, with three kinds of private identifier replaced. The editing of files, and the maker's reading of the
+records, the abandoned search, and the refused and made commits up to 247f9b50. They are whole in `docs/spikes/engine-deaths/session-commands.txt`, from the
+session record. The script replaces six kinds of text where one stands: a digest, a session's id, its scratch path, the archive's path, an
+archive file's name beside a private item's id, and one device's name. The editing of files, and the maker's reading of the
 repository and the card, are not there.
 
 ## Disclosures

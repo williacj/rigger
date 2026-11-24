@@ -249,3 +249,21 @@ start 2026-11-24T21:20:55Z
 command python3 -I session.py
 exit 0
 end 2026-11-24T21:20:55Z
+
+### run 044
+start 2026-11-24T21:34:24Z
+command python3 -I recover.py versions-2
+exit 0
+end 2026-11-24T21:34:25Z
+
+### run 045
+start 2026-11-24T21:34:25Z
+command python3 -I session.py
+exit 0
+end 2026-11-24T21:34:25Z
+
+### run 046
+start 2026-11-24T21:34:25Z
+command sh -c for\ v\ in\ 1\ 2\;\ do\ grep\ -cE\ \"\^\[\^#\|\]\*\\\|s\"\ versions-all/mutants.sh.v\$v.txt\;\ done\;\ grep\ -cE\ \"\^\[\^#\|\]\*\\\|s\"\ versions-all/mutants.sh.v3.txt\;\ for\ n\ in\ 005\ 007\ 009\ 013\ 015\;\ do\ grep\ -cE\ \"\^\(killed\|SURVIVED\)\"\ \"\$SPIKE_RUNS/\$n.txt\"\;\ done
+exit 0
+end 2026-11-24T21:34:26Z

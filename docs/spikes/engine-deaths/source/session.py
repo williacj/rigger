@@ -3,13 +3,14 @@
 
 # Usage: SPIKE_SESSION=<record> python3 -I session.py
 # A 64-digit digest prints as <digest>, a session's id as <session>, its
-# scratch directory as <scratch>, and the name of a device as <device>. Nothing else is changed.
+# scratch directory as <scratch>, the archive as <archive>, a file
+# of it beside a private item's id as <archive file>, and the name of a device as <device>. Nothing else is changed.
 import json, os, re
 
 WANTED = {
     '2026-11-24T17:22:24.273Z': 'a timing of the first version over an invented stream',
     '2026-11-24T17:44:32.192Z': 'a look-up in the public records',
-    '2026-11-24T17:44:38.724Z': 'the search of the comments that was abandoned (p26)',
+    '2026-11-24T17:44:38.724Z': 'the search of the comments that was abandoned',
     '2026-11-24T17:47:44.009Z': 'a look-up in the public records',
     '2026-11-24T17:47:52.298Z': 'the stop of that search',
     '2026-11-24T17:48:32.071Z': 'a look-up in the public records',
@@ -18,9 +19,9 @@ WANTED = {
     '2026-11-24T17:49:00.190Z': 'a comparison of run 027\'s builds',
     '2026-11-24T17:49:39.014Z': 'a look-up in the public records',
     '2026-11-24T17:51:01.865Z': 'a look-up in the public records',
-    '2026-11-24T17:52:59.168Z': 'the first commit, refused (p27)',
+    '2026-11-24T17:52:59.168Z': 'the first commit, refused',
     '2026-11-24T18:01:32.776Z': 'the commit that was made',
-    '2026-11-24T18:10:20.299Z': 'run 032, and the amended commit, refused (p28)',
+    '2026-11-24T18:10:20.299Z': 'run 032, and the amended commit, refused',
     '2026-11-24T18:31:05.673Z': 'the amended commit that was made',
 }
 found = set()
@@ -37,6 +38,9 @@ for line in open(os.environ['SPIKE_SESSION']):
         given = re.sub(r'/private/tmp/claude-\S+?/scratchpad', '<scratch>', given)
         given = re.sub(r'/private/tmp/claude-[^/\s]+/[^/\s]+/[^/\s]+', '<scratch>', given)
         given = re.sub(r'\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b', '<session>', given)
+        given = re.sub(r'(?:\$HOME|~|/Users/\w+)/rigger-spike-archive/1462', '<archive>', given)
+        given = re.sub(r'rigger-spike-archive', '<archive>', given)
+        given = re.sub(r'runs/(?:commit-refused-\d|abandoned-jq)\.txt', '<archive file>', given)
         given = re.sub(r'<device>', '<device>', given)
         print(f'### {when} {part["name"]}: {WANTED[when]}\n{given}\n')
 missing = set(WANTED) - {when for when, _ in found}
