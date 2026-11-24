@@ -41,6 +41,10 @@ function fixture() {
     copyFileSync(join(source, name), join(hooks, name));
     chmodSync(join(hooks, name), 0o755);
   }
+  copyFileSync(join(source, 'refuse-private-content.mjs'), join(hooks, 'refuse-private-content.mjs'));
+  const home = join(directory, 'home');
+  mkdirSync(join(home, '.config', 'rigger'), { recursive: true });
+  writeFileSync(join(home, '.config', 'rigger', 'private-list'), 'an invented entry\n');
   gitIn(clone, 'config', 'core.hooksPath', hooks);
 
   const stub = join(directory, 'stub');
@@ -56,7 +60,7 @@ function fixture() {
   chmodSync(join(stub, 'bin', 'npm'), 0o755);
 
   const { GIT_REFLOG_ACTION, ...inherited } = gitEnvironment();
-  const env = { ...inherited, SUITE_STUB: stub, PATH: `${join(stub, 'bin')}:${process.env.PATH}` };
+  const env = { ...inherited, HOME: home, SUITE_STUB: stub, PATH: `${join(stub, 'bin')}:${process.env.PATH}` };
   const command = (program, args) => spawnSync(program, args, { cwd: clone, encoding: 'utf8', env });
   const git = (...args) => command('git', ['-C', clone, ...args]);
   const record = join(clone, '.git', RECORD);
