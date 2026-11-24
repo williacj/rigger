@@ -260,7 +260,7 @@ function refuses(f, row, args = ['origin', 'topic'], place = /./) {
   const before = f.refs();
   const result = f.push(...args);
   assert.notEqual(result.status, 0, 'the push was not refused');
-  assert.match(result.stderr, new RegExp(`refused: ${row}\\b`), result.stderr);
+  assert.match(result.stderr, new RegExp(`^(?:refused: )?${row}\\b`, 'm'), result.stderr);
   assert.match(result.stderr, place);
   assert.doesNotMatch(result.stderr + result.stdout, new RegExp(`${ENTRY}|${SID}|${SIGMA}`, 'iu'));
   assert.equal(f.refs(), before);
@@ -323,6 +323,10 @@ test('a list entry is refused in every place a push publishes', () => {
   const object = gitIn(named.clone, 'rev-parse', 'HEAD').trim().slice(0, 12);
   writeFileSync(named.list, `${ENTRY}\n${object}\n`);
   assert.ok(!named.push('origin', 'topic').stderr.includes(object), 'the refusal printed an entry that is an object name');
+  refuses(named, 'C5');
+  const word = ['ref', 'used'].join('');
+  writeFileSync(named.list, `${ENTRY}\n${word}\n`);
+  assert.ok(!named.push('origin', 'topic').stderr.split('\n').some((line) => /\bC5\b/.test(line) && line.includes(word)), 'the refusal printed an entry in its own words');
   refuses(named, 'C5');
 });
 
