@@ -428,7 +428,15 @@ test('a push the check cannot read, or that it fails on, is refused without a wo
   rmSync(join(missing.clone, '.git', 'objects', object.slice(0, 2), object.slice(2)));
   const unread = missing.push('origin', 'topic');
   assert.notEqual(unread.status, 0);
-  assert.match(unread.stderr, /could not be checked: git did not answer/);
+  assert.match(unread.stderr, /could not be checked: git did not answer a file/);
+
+  const untracked = listed();
+  untracked.commit({ 'x.txt': 'x\n' });
+  gitIn(untracked.clone, 'update-ref', '-d', 'refs/remotes/origin/main');
+  const unanswered = untracked.push('origin', 'topic');
+  assert.notEqual(unanswered.status, 0);
+  assert.match(unanswered.stderr, /could not be checked: git did not answer what the push would send/);
+  assert.equal(untracked.reachedSuite(), false);
 
   const broken = listed();
   broken.commit({ 'x.txt': 'x\n' });
