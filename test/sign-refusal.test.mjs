@@ -502,16 +502,21 @@ test('S3: a later start retries an unended process and refuses work while it rem
     await until(() => world.events().some(({ event, card }) => event === 'slot.release' && card === second.dispatch.card), t);
     await turn(t);
     if (clear) {
+      first.host.spawn().stdout.write('controlled work\n');
+      first.finish(3);
       await until(() => world.models.length === 3 || world.completed(), t);
       assert.equal(world.models.length, 3, 'a read showing the omitted process gone still stopped later work');
+      assert.ok(world.events().some(({ event, dispatch }) => event === 'dispatch.start' && dispatch === world.models[2].dispatch.dispatch), 'the later dispatch start was not recorded');
       world.models[2].host.spawn().stdout.write('controlled work\n');
       world.models[2].finish(3);
     } else {
       assert.deepEqual(world.events().filter(({ event }) => event === 'pull').map(({ card }) => card), [10, 11], 'take claimed beside an omitted live process');
       assert.equal(world.completed(), false, 'the run ended while its first dispatch ran');
     }
-    first.host.spawn().stdout.write('controlled work\n');
-    first.finish(3);
+    if (!clear) {
+      first.host.spawn().stdout.write('controlled work\n');
+      first.finish(3);
+    }
     await running.catch(() => {});
     const stops = world.events().filter(({ event }) => event === 'sign.stopped');
     if (clear) assert.deepEqual(stops, []);
