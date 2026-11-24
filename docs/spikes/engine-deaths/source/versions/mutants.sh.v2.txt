@@ -1,0 +1,27 @@
+#!/bin/bash
+# ABOUTME: Throwaway mutation check for #1462: each sed edit of count.mjs must fail count.test.mjs.
+here=$(cd "$(dirname "$0")" && pwd)
+while IFS='|' read -r name edit; do
+  tmp=$(mktemp -d "${TMPDIR:-/tmp}/1462-spike-engineer-mut.XXXXXX")
+  sed -E "$edit" "$here/count.mjs" > "$tmp/count.mjs"; cp "$here/count.test.mjs" "$tmp/"
+  if cmp -s "$tmp/count.mjs" "$here/count.mjs"; then echo "NOCHANGE $name"; continue; fi
+  if node --test "$tmp/count.test.mjs" > "$tmp/out" 2>&1; then echo "SURVIVED $name"; else echo "killed $name ($(grep -c '^✖' "$tmp/out"))"; fi
+done <<'LIST'
+selector|s/> SELECTOR/>= SELECTOR/g
+tail ignored|s/end\.at >= tails\.get\(end\.run\)/true/
+release ignored|s/const cleanup = end !== undefined \&\& !released/const cleanup = end !== undefined/
+D1 release|s/released \|\| claim\?\.followed \? 'X'/false ? 'X'/
+recorded.killed same run|s/event\.run !== one\.run \&\& event\.at > one\.start\.at/event.at > one.start.at/
+timeout order|s/else if \(timeout !== undefined\) one\.row = 'D4'/else if (false) one.row = 'D4'/
+digest gate|s/if \(digest !== passed\)/if (false)/
+archive mode|s/\(held\.mode \& 0o077\) !== 0/false/
+overwrite|s/flag: 'wx'/flag: 'w'/
+marks leak|s/out\[mark\] = Object.hasOwn\(event, mark\) \&\& event\[mark\] !== false/out[mark] = event[mark]/
+shape unchecked|s/if \(shape\(event\[field\]\)\)/if (true)/
+fragment later|s/event === undefined \? opensLater\(line\)/event === undefined ? false/
+call.end is cleanup|s/!\['call\.end', 'fetch\.retried'\]/!['fetch.retried']/
+symlink|s/ \| constants\.O_NOFOLLOW//
+merge claims|s/claims\.filter\(\(claim\) => !claim\.merging\)/claims/
+redo same run|s/earlier\.run !== claim\.run \&\& !earlier\.released/earlier.run !== claim.run/
+redo other run|s/earlier.run !== claim.run \&\& !earlier/!earlier/
+LIST

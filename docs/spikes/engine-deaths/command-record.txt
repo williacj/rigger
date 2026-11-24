@@ -2,10 +2,13 @@ ABOUTME: #1462's published command record: every command its recorder ran, in or
 end and its exit. A private identifier is a fixed placeholder (<source>, <archive>, <digest>), written so as it was captured.
 
 Every command ran in the spike's throwaway directory, spikes/1462/, or the worktree root where a name starts spikes/. Each
-argv is shown as bash's printf %q quotes it. The scripts are beside this file, under source/. Runs 014 to 032 ran the texts
-published there, except as the report's "Failed, abandoned and repeated runs" says. Runs 026 and 031 do not exist: the numbering
-counted files added to the archive by hand.
+argv is shown as bash's printf %q quotes it. Four things are beside this file:
+- source/ holds the last text of each script, and source/versions/ each earlier text a run executed;
+- versions.txt says which text each of runs 001 to 032 had, and "Script versions" in the report says the same of runs 034 on;
+- session-commands.txt holds the commands the recorder did not run;
+- mutation-evidence.txt holds run 035's output.
 The test file ran as count.test.mjs. It is published as count.test.mjs.txt, so that the suite does not discover it.
+Runs 026, 031 and 033 do not exist: the numbering counted files added to the archive by hand.
 
 ### run 001
 start 2026-11-24T17:19:56Z
@@ -187,3 +190,62 @@ command bash -c diff\ <\(sed\ -n\ \"/\^==\ counts/\,/\^==\ private/p\"\ \"\$SPIK
 exit 0
 end 2026-11-24T18:10:20Z
 
+### run 034
+start 2026-11-24T21:16:00Z
+command node mutation.mjs
+exit 1
+end 2026-11-24T21:16:07Z
+
+### run 035
+start 2026-11-24T21:16:23Z
+command node mutation.mjs
+exit 0
+end 2026-11-24T21:20:22Z
+
+### run 036
+start 2026-11-24T21:20:41Z
+command python3 -I recover.py versions-all
+exit 0
+end 2026-11-24T21:20:42Z
+
+### run 037
+start 2026-11-24T21:20:42Z
+command python3 -I session.py
+exit 0
+end 2026-11-24T21:20:42Z
+
+### run 038
+start 2026-11-24T21:20:42Z
+command node temporal.mjs a0f5a970
+exit 0
+end 2026-11-24T21:20:42Z
+
+### run 039
+start 2026-11-24T21:20:42Z
+command sh -c gh\ api\ repos/williacj/rigger/issues/comments/6981560600\ --jq\ \'.created_at\,\ \(.body\ \|\ split\(\"\\n\"\)\[\]\ \|\ select\(test\(\"launchd\ starts\ an\ unlisted\ run\ 3600\ s\"\)\)\)\'
+exit 0
+end 2026-11-24T21:20:42Z
+
+### run 040
+start 2026-11-24T21:20:43Z
+command sh -c for\ id\ in\ 7139235069\ 7139559927\;\ do\ gh\ api\ repos/williacj/rigger/issues/comments/\$id\ --jq\ \".created_at\,\ .updated_at\"\;\ done
+exit 0
+end 2026-11-24T21:20:44Z
+
+### run 041
+start 2026-11-24T21:20:44Z
+command node -e const\ bound\ =\ 2.996\ /\ 9.6267\ \*\ 100\;\ console.log\(\`no\ death\ in\ 9.6267\ engine\ hours\,\ one-sided\ 95%\ bound:\ \$\{bound.toFixed\(1\)\}\ per\ 100\ engine\ hours\,\ \$\{\(bound\ /\ 5\).toFixed\(1\)\}\ times\ 5\`\)\;
+exit 0
+end 2026-11-24T21:20:44Z
+
+### run 042
+start 2026-11-24T21:20:44Z
+command sh -c gh\ api\ repos/williacj/rigger/issues/comments/7112776030\ --jq\ \'.body\'\ \|\ grep\ -oE\ \'Those\ runs\ failed\ only\ on\ L7\[\^\,\]\*\,\ a\ known-flaky\ test\[\^\,\]\*\'
+exit 0
+end 2026-11-24T21:20:44Z
+
+### run 043
+start 2026-11-24T21:20:55Z
+command python3 -I session.py
+exit 0
+end 2026-11-24T21:20:55Z
