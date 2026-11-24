@@ -1,0 +1,40 @@
+ABOUTME: Card #1460: the failing section of each CI job that failed on pull request #1471, from its mode line to its exit line, with the whole log's sha256. The whole logs are kept off-repo.
+
+## CI at an earlier head, kept off-repo: job "broad deferred (26)". Whole run log 1604966 bytes, sha256 5fc04e709bf8a20d4a347207472e2c5ccd735180165d38b654ff669bc30269eb.
+2026-11-23T02:50:42.0755402Z {"job":"check","mode":"INVALID","eventBase":"fbddb4b120378b5adde2a39dd0fa026d3a410c20","currentMain":"7e898b2a9d9c612dea94f5e9aa4f4ed7e8250cd3","mainAdvanced":null,"node":"v26.13.1","platform":"linux","runner":"GitHub Actions 1000065439","runnerOS":"Linux","runnerArch":"X64"}
+2026-11-23T02:50:42.0757027Z file:///home/runner/work/rigger/rigger/[eval1]:186
+2026-11-23T02:50:42.0757508Z   if (!result.ok) throw new Error(result.reason);
+2026-11-23T02:50:42.0757881Z                         ^
+2026-11-23T02:50:42.0758056Z 
+2026-11-23T02:50:42.0758342Z Error: current source or required tier result did not verify
+2026-11-23T02:50:42.0758870Z     at file:///home/runner/work/rigger/rigger/[eval1]:186:25
+2026-11-23T02:50:42.0759591Z     at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+2026-11-23T02:50:42.0759987Z 
+2026-11-23T02:50:42.0760109Z Node.js v26.13.1
+2026-11-23T02:50:42.0797730Z ##[error]Process completed with exit code 1.
+
+## CI at the first pushed head of the rewritten branch, run 45275180485: job "fast". Job log 193681 bytes, sha256 ebb3e22c218c49379f6c612e9204939098cef8e07b59500bf0050f42de50b1cb.
+2026-11-23T21:59:53.3020023Z {"job":"fast","mode":"INVALID","node":"v26.13.1","platform":"linux","runner":"GitHub Actions 1000066182","runnerOS":"Linux","runnerArch":"X64"}
+2026-11-23T21:59:53.3020625Z file:///home/runner/work/rigger/rigger/[eval1]:186
+2026-11-23T21:59:53.3020885Z   if (!result.ok) throw new Error(result.reason);
+2026-11-23T21:59:53.3021085Z                         ^
+2026-11-23T21:59:53.3021181Z 
+2026-11-23T21:59:53.3021326Z Error: worker source/mode verification failed
+2026-11-23T21:59:53.3021563Z     at file:///home/runner/work/rigger/rigger/[eval1]:186:25
+2026-11-23T21:59:53.3021863Z     at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+2026-11-23T21:59:53.3022055Z 
+2026-11-23T21:59:53.3022112Z Node.js v26.13.1
+2026-11-23T21:59:53.3063178Z ##[error]Process completed with exit code 1.
+
+## The same run: job "check (26)". Job log 194400 bytes, sha256 e29160ff8ba520c50b92c90b872b0fb81ce087f42fa6a3228709ae034886ce51.
+2026-11-23T22:00:14.3431315Z {"job":"check","mode":"INVALID","eventBase":"3e325ab83911b66a07076d6dc852d9291941075d","currentMain":"3e325ab83911b66a07076d6dc852d9291941075d","mainAdvanced":null,"node":"v26.13.1","platform":"linux","runner":"GitHub Actions 1000066185","runnerOS":"Linux","runnerArch":"X64"}
+2026-11-23T22:00:14.3432351Z file:///home/runner/work/rigger/rigger/[eval1]:186
+2026-11-23T22:00:14.3432819Z   if (!result.ok) throw new Error(result.reason);
+2026-11-23T22:00:14.3433151Z                         ^
+2026-11-23T22:00:14.3433298Z 
+2026-11-23T22:00:14.3433498Z Error: current source or required tier result did not verify
+2026-11-23T22:00:14.3434091Z     at file:///home/runner/work/rigger/rigger/[eval1]:186:25
+2026-11-23T22:00:14.3434689Z     at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+2026-11-23T22:00:14.3435020Z 
+2026-11-23T22:00:14.3435496Z Node.js v26.13.1
+2026-11-23T22:00:14.3471806Z ##[error]Process completed with exit code 1.

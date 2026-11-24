@@ -1,0 +1,14 @@
+ABOUTME: Card #1460 refused amend, 2026-11-24 UTC: the suite's failure section, from its 'failing tests' line to the end of the log, unabridged. The whole log (7445287 bytes) had sha256 4d052d4d1bff6a2ed66dc33cc8ecf06eecaf08ba8a4467bffd6bfdd7a1518c2f and is kept off-repo.
+✖ failing tests:
+
+test at test/loop.test.mjs:5559:1
+✖ L7: through the run verb, a clock-held run fires a pull at its slot release (9868.205916ms)
+  Error: the condition () => pulls() === 2 did not hold within 5000 ms
+      at waitFor (file:///Users/cjwilliams/GitHub/rigger-worktrees/1460-spike-engineer/test/loop-world.mjs:70:40)
+      at async TestContext.<anonymous> (file:///Users/cjwilliams/GitHub/rigger-worktrees/1460-spike-engineer/test/loop.test.mjs:5567:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+refused: the suite is not green.
+Fix it and commit the fix on its own before you go on (AGENTS.md, Before you start).
+--no-verify needs the owner's approval first.

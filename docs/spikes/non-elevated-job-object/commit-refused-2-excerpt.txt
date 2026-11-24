@@ -1,0 +1,42 @@
+ABOUTME: Card #1458, the amend attempt the commit hook refused (issued 2026-11-23T20:48:18.782Z, slot 20:48:19Z to 21:08:11Z): its summary, its
+failing sections and the sha256 of its full output (7334894 bytes), which is kept off-repo. Lines below are copied from that output unchanged.
+
+full output sha256: 526e57e0b75b2af5c5345230e986ddf893c5698d440cb1dd3d14ec67437460de
+
+== summary ==
+ℹ tests 6040
+ℹ suites 0
+ℹ pass 6037
+ℹ fail 1
+ℹ cancelled 2
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 818956.966792
+
+== the failing lines where they first appear ==
+line 4125: ✖ L7: through the run verb, a clock-held run fires a pull at its slot release (10085.564916ms)
+line 6214:   ✖ judges / label (5705.986ms)
+line 6215: ✖ run names every refused escalation write at an attempt or the judges and pulls the card once (60247.546583ms)
+
+== the failing-tests section, to the end of the output ==
+✖ failing tests:
+
+test at test/loop.test.mjs:5559:1
+✖ L7: through the run verb, a clock-held run fires a pull at its slot release (10085.564916ms)
+  Error: the condition () => pulls() === 2 did not hold within 5000 ms
+      at waitFor (file:///Users/cjwilliams/GitHub/rigger-worktrees/1458-spike-engineer-clean/test/loop-world.mjs:70:40)
+      at async TestContext.<anonymous> (file:///Users/cjwilliams/GitHub/rigger-worktrees/1458-spike-engineer-clean/test/loop.test.mjs:5567:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/verb-facts.test.mjs:222:13
+✖ judges / label (5705.986ms)
+  'test did not finish before its parent and was cancelled'
+
+test at test/verb-facts.test.mjs:220:1
+✖ run names every refused escalation write at an attempt or the judges and pulls the card once (60247.546583ms)
+  'test timed out after 60000ms'
+
+refused: the suite is not green.
+Fix it and commit the fix on its own before you go on (AGENTS.md, Before you start).
+--no-verify needs the owner's approval first.
