@@ -3,7 +3,7 @@
 
 # Bootstrap a Rigger macOS host, and use any host for a spike
 
-This guide sets up a macOS host to run `npm test` and `npm run test:host` and to run makers and judges, and it states what a spike may collect and publish on a host it uses that is a personal machine, whatever that host's operating system. The coordinator remains on the primary host, and owner markers are posted from the primary host ([K31](https://github.com/williacj/rigger/issues/740#issuecomment-6290234702)). The product route for an owner verdict is `rigger verdict` from an installed, promoted engine version that implements that verb. The live gate pin below is the installation reference for the existing engine steps; a version at that pin does not thereby supply `verdict`. Do not promote the pin silently.
+This guide sets up a macOS host to run `npm test` and `npm run test:host` and to run makers and judges, and it states what a spike may collect and publish on a host it uses that is a personal machine, whatever that host's operating system. A host without the private list can push nothing but a deletion through the hook; see [The pre-push content check](#the-pre-push-content-check). The coordinator remains on the primary host, and owner markers are posted from the primary host ([K31](https://github.com/williacj/rigger/issues/740#issuecomment-6290234702)). The product route for an owner verdict is `rigger verdict` from an installed, promoted engine version that implements that verb. The live gate pin below is the installation reference for the existing engine steps; a version at that pin does not thereby supply `verdict`. Do not promote the pin silently.
 
 The [README prerequisites](../README.md#prerequisites) own the Node floor and supported host. Use a supported Node 26 runtime for this repository's verification. The historical versions in the next table were measured on 2026-10-19 on host key `macos-27.0.1-arm64-node26`, as recorded in [#816 Part 4, §9](https://github.com/williacj/rigger/issues/816#issuecomment-6291030802). They are observations of that host on that date, not current prerequisites.
 
@@ -61,6 +61,8 @@ cd ~/GitHub/rigger
 git config core.hooksPath .githooks
 git remote set-head origin -a
 ~~~
+
+That `core.hooksPath` step runs the repository's hooks, so a host without the private list can push nothing but a deletion ([The pre-push content check](#the-pre-push-content-check)).
 
 Set up only these host-local entries; the repository does not carry them:
 
@@ -199,6 +201,24 @@ ps -axo pid=,command= | grep -E '([c]odex-(maker|judge|resume|retry)[.]sh|[s]uit
 ~~~
 
 No matching script may be running when you pull. From `~/GitHub/rigger`, run `git pull --ff-only` only after that check shows no matches. A process the session did not start belongs to the owner; do not stop it to make a pull possible.
+
+## The pre-push content check
+
+`.githooks/pre-push` runs `.githooks/refuse-private-content.mjs`, which refuses a push that would publish content of four shapes or an entry of the private list. Its header names what it reads.
+
+The list is one UTF-8 file, private-list in the .config/rigger directory under `HOME`, outside every checkout, on the owner's laptop, held by the owner. Each line is an entry; blank lines and lines that open with `#` are skipped, and an entry has at least four characters. It holds no name or handle the owner lets a commit carry. Only the owner edits it.
+
+**Hosts.** The list is on the laptop only, so only the laptop can push through the hook. Any other host that runs the hook refuses every push with an update that is no deletion. A worktree of the laptop's checkout has that checkout's absolute path as `core.hooksPath`, so it runs that checkout's copy: a branch's edit has no effect there, and merging is not enough until that checkout holds the change. A clone whose `core.hooksPath` is relative, as the Codex launchers set it, runs its own branch's copy.
+
+**Limits.** The check does not see past any of these:
+
+- the web editor, API commits, the forge's own merge commit, CI logs, the engine's data-ref push, which uses `--no-verify`, a push to another repository or gist, and a host without the hook;
+- a clone that runs its own branch's copy, where that branch edits the check or was cut before it;
+- a default-branch tracking ref that did not come from that remote, which can pass content unread;
+- `HOME`, `PATH`, `GIT_*` and `core.hooksPath`, which can redirect it;
+- base64, hexadecimal, an image, an archive, a listing with no header or a translated one, a file split to stay under the evidence size limit, and a list that is out of date.
+
+A clean result is no privacy check under the next section.
 
 ## Spikes on a personal machine
 

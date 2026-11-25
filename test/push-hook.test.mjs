@@ -1,9 +1,11 @@
 // ABOUTME: Exercises the pre-push default-branch refusal with real local pushes to a bare remote.
+// It exercises the content refusal the same way, against an invented private list.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { chmodSync, copyFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { rmSync, symlinkSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -13,6 +15,7 @@ import { temporaryDirectory } from './temporary-directory.mjs';
 
 const prePush = process.env.RIGGER_PRE_PUSH_HOOK
   ?? join(dirname(fileURLToPath(import.meta.url)), '..', '.githooks', 'pre-push');
+const contentCheck = join(dirname(fileURLToPath(import.meta.url)), '..', '.githooks', 'refuse-private-content.mjs');
 
 function fixture(defaultBranch) {
   const directory = temporaryDirectory('rigger-push-hook-');
@@ -27,6 +30,10 @@ function fixture(defaultBranch) {
   mkdirSync(hooks);
   copyFileSync(prePush, join(hooks, 'pre-push'));
   chmodSync(join(hooks, 'pre-push'), 0o755);
+  copyFileSync(contentCheck, join(hooks, 'refuse-private-content.mjs'));
+  const home = join(directory, 'home');
+  mkdirSync(join(home, '.config', 'rigger'), { recursive: true });
+  writeFileSync(join(home, '.config', 'rigger', 'private-list'), 'an invented entry\n');
   writeFileSync(join(hooks, 'refuse-if-suite-red'), [
     '#!/bin/sh',
     '# ABOUTME: Marks that a push reached the suite check in this local Git fixture.',
@@ -37,7 +44,8 @@ function fixture(defaultBranch) {
   gitIn(clone, 'config', 'core.hooksPath', hooks);
   gitIn(clone, 'commit', '--allow-empty', '-qm', 'second');
 
-  const { GIT_REFLOG_ACTION, ...env } = gitEnvironment();
+  const { GIT_REFLOG_ACTION, ...inherited } = gitEnvironment();
+  const env = { ...inherited, HOME: home };
   const command = (program, args, options = {}) => spawnSync(program, args, { cwd: clone, encoding: 'utf8', env, ...options });
   const git = (...args) => command('git', ['-C', clone, ...args]);
   const push = (...args) => git('push', ...args);
@@ -221,3 +229,243 @@ for (const defaultBranch of ['main', 'trunk']) {
     ]));
   });
 }
+
+const ENTRY = ['Quill', 'feather'].join('');
+const SIGMA = ['\u039c\u039f', '\u03a3\u03a3'].join('');
+const SID = [['S', '1', '5', '21'].join('-'), '7'].join('-');
+
+/** The fixture, on a topic branch, whose pushes meet an invented private list. */
+function listed() {
+  const f = fixture('main');
+  gitIn(f.clone, 'switch', '-q', '-c', 'topic', 'origin/main');
+  const list = join(dirname(f.hooks), 'home', '.config', 'rigger', 'private-list');
+  writeFileSync(list, `# invented\n${ENTRY}\n${SIGMA}\n`);
+  return {
+    ...f,
+    list,
+    commit(files, message = 'change') {
+      for (const [path, bytes] of Object.entries(files)) {
+        mkdirSync(dirname(join(f.clone, path)), { recursive: true });
+        writeFileSync(join(f.clone, path), bytes);
+      }
+      gitIn(f.clone, 'add', '-A');
+      gitIn(f.clone, 'commit', '-q', '-m', message);
+    },
+    reachedSuite: () => existsSync(join(f.hooks, 'refuse-if-suite-red.called')),
+  };
+}
+
+/** The push is refused for `row`, before the suite, and neither stream repeats what was matched. */
+function refuses(f, row, args = ['origin', 'topic'], place = /./) {
+  const before = f.refs();
+  const result = f.push(...args);
+  assert.notEqual(result.status, 0, 'the push was not refused');
+  assert.match(result.stderr, new RegExp(`^(?:refused: )?${row}\\b`, 'm'), result.stderr);
+  assert.match(result.stderr, place);
+  assert.doesNotMatch(result.stderr + result.stdout, new RegExp(`${ENTRY}|${SID}|${SIGMA}`, 'iu'));
+  assert.equal(f.refs(), before);
+  assert.equal(f.reachedSuite(), false);
+}
+
+function passes(f, args = ['origin', 'topic']) {
+  const result = f.push(...args);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(f.reachedSuite(), true);
+}
+
+const utf16be = (text) => Buffer.from(text, 'utf16le').swap16();
+const HEADER = `${'PI'}${'D'} ${'COMM'}${'AND'}`;
+const ADDRESS = ['ana', 'post.zone'].join('@');
+
+// D29 reason: wiring; the rows' decisions are proved in test/push-content.test.mjs.
+test('each row refuses a real push, in every encoding it reads, whatever the attributes say', () => {
+  for (const [row, line] of [['C1', SID], ['C2', ADDRESS], ['C2', ['noreply', 'post.zone', 'other.zone'].join('@')], ['C3', HEADER], ['C5', ENTRY]]) {
+    for (const bytes of [Buffer.from(`${line}\n`), Buffer.from(`${line}\n`, 'utf16le'), utf16be(`${line}\n`)]) {
+      const f = listed();
+      f.commit({ '.gitattributes': '* binary -diff\n', 'data.bin': bytes });
+      refuses(f, row, undefined, /"data\.bin" line 1/);
+    }
+  }
+  const f = listed();
+  f.commit({ 'docs/spikes/big.txt': 'a\n'.repeat(250_001) });
+  refuses(f, 'C4', undefined, /"docs\/spikes\/big\.txt"/);
+});
+
+// D29 reason: wiring; the rows' decisions are proved in test/push-content.test.mjs.
+test('a list entry is refused in every place a push publishes', () => {
+  const places = {
+    'a path': [(f) => f.commit({ [`${ENTRY}/x.txt`]: 'x\n' }), /, a path\./],
+    'a line in another case': [(f) => f.commit({ 'x.txt': `\u03bc\u03bf${'\u03c3'.repeat(2)}\n` }), /"x\.txt" line 1/],
+    'a path in another case': [(f) => f.commit({ [`docs/${SIGMA}.txt`]: 'x\n' }), /, a path\./],
+    'a link target': [(f) => { symlinkSync(ENTRY, join(f.clone, 'link')); f.commit({}); }, /its link target/],
+    'a message': [(f) => f.commit({ x: 'x\n' }, `about ${ENTRY}`), /its message/],
+    'an author field': [(f) => { writeFileSync(join(f.clone, 'x'), 'x'); gitIn(f.clone, 'add', 'x'); gitIn(f.clone, 'commit', '-qm', 'x', `--author=${ENTRY} <a@example.invalid>`); }, /author or committer/],
+    'a committer field': [(f) => { gitIn(f.clone, 'config', 'user.name', ENTRY); writeFileSync(join(f.clone, 'x'), 'x'); gitIn(f.clone, 'add', 'x'); gitIn(f.clone, 'commit', '-qm', 'x', '--author=a <a@example.invalid>'); }, /author or committer/],
+    'a ref name': [(f) => f.commit({ x: 'x\n' }), /the name of a pushed ref/, ['origin', `HEAD:refs/heads/${ENTRY}`]],
+    'a tag message': [(f) => { f.commit({ x: 'x\n' }); gitIn(f.clone, 'tag', '-a', 'v1', '-m', `for ${ENTRY}`); }, /tag object .*, its message/, ['origin', 'v1']],
+    'a nested tag message': [(f) => { f.commit({ x: 'x\n' }); gitIn(f.clone, 'tag', '-a', 'v1', '-m', `for ${ENTRY}`); gitIn(f.clone, 'tag', '-a', 'v2', '-m', 'plain', 'v1'); }, /tag object .*, its message/, ['origin', 'v2']],
+    'a tagger field': [(f) => { f.commit({ x: 'x\n' }); gitIn(f.clone, 'config', 'user.name', ENTRY); gitIn(f.clone, 'tag', '-a', 'v1', '-m', 'plain'); }, /its tagger field/, ['origin', 'v1']],
+    'a merge commit\'s own line': [(f) => {
+      gitIn(f.clone, 'switch', '-q', '-c', 'side'); f.commit({ README: 'side\n' });
+      gitIn(f.clone, 'switch', '-q', 'topic'); f.commit({ README: 'topic\n' });
+      assert.throws(() => gitIn(f.clone, 'merge', '-q', 'side'));
+      f.commit({ README: `${ENTRY}\n` }, 'merge');
+      assert.equal(gitIn(f.clone, 'log', '-1', '--format=%P').trim().split(' ').length, 2);
+    }, /"README" line 1/],
+  };
+  for (const [name, [prepare, place, args]] of Object.entries(places)) {
+    const f = listed();
+    prepare(f);
+    assert.doesNotThrow(() => refuses(f, 'C5', args, place), name);
+  }
+  const named = listed();
+  named.commit({ 'x.txt': `${ENTRY}\n` });
+  const object = gitIn(named.clone, 'rev-parse', 'HEAD').trim().slice(0, 12);
+  writeFileSync(named.list, `${ENTRY}\n${object}\n`);
+  assert.ok(!named.push('origin', 'topic').stderr.includes(object), 'the refusal printed an entry that is an object name');
+  refuses(named, 'C5');
+  const word = ['ref', 'used'].join('');
+  writeFileSync(named.list, `${ENTRY}\n${word}\n`);
+  assert.ok(!named.push('origin', 'topic').stderr.split('\n').some((line) => /\bC5\b/.test(line) && line.includes(word)), 'the refusal printed an entry in its own words');
+  refuses(named, 'C5');
+  writeFileSync(named.list, `${ENTRY}\n${word}\n${['C5', '#1'].join(' ')}\n`);
+  refuses(named, 'C5', undefined, /^C5\b\D*1$/m);
+});
+
+// D29 reason: wiring; which lines a merge adds is proved in test/push-content.test.mjs.
+test('a merge that takes either parent\'s line adds none, and content a later pushed commit removes is refused', () => {
+  const taken = listed();
+  gitIn(taken.clone, 'switch', '-q', 'main');
+  taken.commit({ 'from-main.txt': `${ADDRESS}\n` });
+  gitIn(taken.clone, 'update-ref', 'refs/remotes/origin/main', 'main');
+  gitIn(taken.clone, 'switch', '-q', 'topic');
+  taken.commit({ 'mine.txt': 'mine\n' });
+  gitIn(taken.clone, 'merge', '-q', '--no-edit', 'main');
+  passes(taken);
+
+  const removed = listed();
+  removed.commit({ 'x.txt': `${ENTRY}\n` });
+  removed.commit({ 'x.txt': 'clean\n' });
+  refuses(removed, 'C5');
+});
+
+// D29 reason: wiring; its claim depends on no decision Rigger makes.
+test('only the default branch\'s tracking ref and the old SHA hold a commit back from being read', () => {
+  const tracked = listed();
+  tracked.commit({ 'x.txt': `${ENTRY}\n` });
+  gitIn(tracked.clone, 'update-ref', 'refs/remotes/origin/elsewhere', 'topic');
+  refuses(tracked, 'C5');
+  gitIn(tracked.clone, 'update-ref', 'refs/remotes/origin/main', 'topic');
+  tracked.commit({ 'y.txt': 'y\n' });
+  passes(tracked);
+
+  const pushed = listed();
+  pushed.commit({ 'x.txt': `${ENTRY}\n` });
+  assert.equal(pushed.push('--no-verify', 'origin', 'topic').status, 0);
+  pushed.commit({ 'y.txt': 'y\n' });
+  passes(pushed);
+});
+
+// D29 reason: wiring; what each list's bytes mean is proved in test/push-content.test.mjs.
+test('each state of the list refuses a push, one that sends no object included, and no deletion', () => {
+  for (const [state, set] of [
+    [/private list is absent/, (f) => rmSync(f.list)],
+    [/private list is absent/, (f) => rmSync(dirname(dirname(f.list)), { recursive: true })],
+    [/private list is unreadable/, (f) => { rmSync(f.list); mkdirSync(f.list); }],
+    [/private list is unreadable/, (f) => chmodSync(f.list, 0o000)],
+    [/private list is not UTF-8/, (f) => writeFileSync(f.list, Buffer.from([0x66, 0xff, 0x66, 0x66]))],
+    [/private list holds no entry/, (f) => writeFileSync(f.list, '# none\n')],
+    [/under four characters/, (f) => writeFileSync(f.list, `${ENTRY}\nabc\n`)],
+  ]) {
+    const f = listed();
+    f.commit({ 'x.txt': 'x\n' });
+    passes(f, ['origin', 'topic', 'HEAD:refs/heads/gone']);
+    rmSync(join(f.hooks, 'refuse-if-suite-red.called'));
+    set(f);
+    const before = f.refs();
+    const same = f.push('origin', 'HEAD:refs/heads/again');
+    assert.notEqual(same.status, 0);
+    assert.match(same.stderr, state);
+    assert.equal(f.refs(), before);
+    assert.equal(f.push('origin', ':refs/heads/gone').status, 0);
+    assert.doesNotMatch(f.refs(), /refs\/heads\/gone/);
+  }
+});
+
+// D29 reason: wiring; the rows' decisions are proved in test/push-content.test.mjs.
+test('a tip that peels to a tree or a blob is read whole, what the remote holds of it included', () => {
+  const tree = (f, files) => {
+    for (const [path, bytes] of Object.entries(files)) { mkdirSync(dirname(join(f.clone, path)), { recursive: true }); writeFileSync(join(f.clone, path), bytes); }
+    gitIn(f.clone, 'add', '-A');
+    gitIn(f.clone, 'tag', 'tree', gitIn(f.clone, 'write-tree').trim());
+  };
+  const blob = (f, bytes) => gitIn(f.clone, 'tag', '-a', 'blob', '-m', 'plain', f.command('git', ['hash-object', '-w', '--stdin'], { input: bytes }).stdout.trim());
+  const cases = [
+    ['a file', (f) => tree(f, { 'a/x.txt': `x\n${ENTRY}\n` }), 'C5', /"a\/x\.txt" line 2/, 'tree'],
+    ['a path', (f) => tree(f, { [`a/${ENTRY}/x.txt`]: 'x\n' }), 'C5', /a path\./, 'tree'],
+    ['a link', (f) => { symlinkSync(ENTRY, join(f.clone, 'link')); tree(f, {}); }, 'C5', /its link target/, 'tree'],
+    ['a blob', (f) => blob(f, Buffer.from(`${SID}\n`, 'utf16le')), 'C1', /line 1/, 'blob'],
+  ];
+  for (const [name, prepare, row, place, tag] of cases) {
+    const f = listed();
+    prepare(f);
+    assert.doesNotThrow(() => refuses(f, row, ['origin', tag], place), name);
+  }
+  const held = listed();
+  held.commit({ 'x.txt': `${ENTRY}\n` });
+  gitIn(held.clone, 'update-ref', 'refs/remotes/origin/main', 'topic');
+  tree(held, {});
+  refuses(held, 'C5', ['origin', 'tree']);
+  const clean = listed();
+  tree(clean, { 'x.txt': 'x\n' });
+  passes(clean, ['origin', 'tree']);
+  const word = listed();
+  blob(word, 'plain');
+  passes(word, ['origin', 'blob']);
+});
+
+// D29 reason: wiring; which update lines parse is proved in test/push-content.test.mjs.
+test('a push the check cannot read, or that it fails on, is refused without a word of what it read', () => {
+  const missing = listed();
+  missing.commit({ 'x.txt': 'unique\n' });
+  const object = gitIn(missing.clone, 'rev-parse', 'HEAD:x.txt').trim();
+  rmSync(join(missing.clone, '.git', 'objects', object.slice(0, 2), object.slice(2)));
+  const unread = missing.push('origin', 'topic');
+  assert.notEqual(unread.status, 0);
+  assert.match(unread.stderr, /could not be checked: git did not answer a file/);
+
+  const untracked = listed();
+  untracked.commit({ 'x.txt': 'x\n' });
+  gitIn(untracked.clone, 'update-ref', '-d', 'refs/remotes/origin/main');
+  const unanswered = untracked.push('origin', 'topic');
+  assert.notEqual(unanswered.status, 0);
+  assert.match(unanswered.stderr, /could not be checked: git did not answer what the push would send/);
+  assert.equal(untracked.reachedSuite(), false);
+
+  const broken = listed();
+  broken.commit({ 'x.txt': 'x\n' });
+  writeFileSync(join(broken.hooks, 'refuse-private-content.mjs'), `throw new Error('${ENTRY}');\n`);
+  assert.notEqual(broken.push('origin', 'topic').status, 0);
+  rmSync(join(broken.hooks, 'refuse-private-content.mjs'));
+  assert.notEqual(broken.push('origin', 'topic').status, 0);
+  assert.equal(broken.reachedSuite(), false);
+
+  const sha = gitIn(broken.clone, 'rev-parse', 'HEAD').trim();
+  const direct = listed();
+  for (const input of [`refs/heads/topic ${sha}\n`, `a ${sha} refs/heads/b ${sha}`, '\n']) {
+    const run = direct.command('sh', [join(direct.hooks, 'pre-push'), 'origin', direct.remote], { input });
+    assert.notEqual(run.status, 0, JSON.stringify(input));
+    assert.match(run.stderr, /could not be checked: an update line/);
+    assert.equal(direct.reachedSuite(), false);
+  }
+  const empty = direct.command('sh', [join(direct.hooks, 'pre-push'), 'origin', direct.remote], { input: '' });
+  assert.equal(empty.status, 0, empty.stderr);
+});
+
+// D29 reason: wiring; its claim depends on no decision Rigger makes.
+test('a push whose suite is skipped, because every pushed tree passed it, is still checked', () => {
+  const f = listed();
+  f.commit({ 'x.txt': `${ENTRY}\n` });
+  writeFileSync(join(f.clone, '.git', 'rigger-suite-green-trees'), gitIn(f.clone, 'rev-parse', 'HEAD^{tree}'));
+  refuses(f, 'C5');
+});
