@@ -185,7 +185,6 @@ test('S3: a later start retries an unended process and refuses work while it rem
 });
 
 // Each control establishes the next role that the corresponding sign must prevent.
-// proves R-STATE-30, R-STATE-39
  test('R1-R4 and R9: a provisioner maker judge or escalation predecessor sign prevents its next role', { timeout: 20_000 }, async (t) => {
   const { signLoopWorld, until } = await import('./process-fixtures.mjs');
   const { minimalConfig } = await import('./optional-config.mjs');
@@ -334,7 +333,18 @@ test('S3: a later start retries an unended process and refuses work while it rem
   world.table.delete(omitted);
   for (const model of world.models) model.finish(3);
   await running.catch(() => {});
-  await killRecordedGroups({ directory: world.state, sink: world.sink, host: world.host });
+  const next = trackerWorld(world.clock, second.group + 100, world.table);
+  const [restart] = await Promise.allSettled([(async () => {
+    await killRecordedGroups({ directory: world.state, sink: world.sink, host: world.host });
+    const starting = dispatch({ id: 'd-after-budget', card: second.dispatch.card, directory: world.state, sink: world.sink,
+      command: '/controlled/command', args: [], cwd: '/', env: {}, timeout: 60_000, host: next.host, clock: world.clock.now });
+    starting.catch(() => {});
+    await turn(t);
+    next.finish();
+    await starting;
+  })()]);
+  assert.ok(world.events().some(({ event, dispatch, card }) => event === 'dispatch.start' && dispatch === 'd-after-budget' && card === second.dispatch.card), 'the next start did not record dispatch.start for the pulled card after the omitted process exited');
+  assert.equal(restart.status, 'fulfilled', 'the next start did not finish its dispatch');
   assert.deepEqual(readGroups(world.state), [], 'the next start did not clear signs shown gone');
 });
 
@@ -424,7 +434,6 @@ test('S3: a later start retries an unended process and refuses work while it rem
 });
 
 // S7 must not signal an identity an unreadable table cannot confirm; S8 must admit an unreaped exit.
-// proves R-STATE-31, R-STATE-38
  test('S7-S8: only a successful table read shows a process gone, and a zombie is gone', { timeout: 10_000 }, async (t) => {
   const { writeGroups } = await import('../src/execution/groups.mjs');
   for (const observation of ['failed read', 'unreadable start', 'zombie', 'absent', 'reused pid']) await t.test(observation, async (t) => {
@@ -494,7 +503,7 @@ test('S3: a later start retries an unended process and refuses work while it rem
 });
 
 // S14a must refuse another claim while the omitted process runs; S14b must allow it once gone before take.
-// proves R-STATE-34, R-STATE-36, R-STATE-37
+// proves R-STATE-34
  test('S14a-S14b: take weighs a failed write before claiming while another dispatch is still running', { timeout: 20_000 }, async (t) => {
   const { signLoopWorld, until } = await import('./process-fixtures.mjs');
   const { mkdirSync, rmSync } = await import('node:fs');
@@ -543,7 +552,6 @@ test('S3: a later start retries an unended process and refuses work while it rem
 });
 
 // An initial entry write can fail after spawn; its cleanup still owes every unended process a sign.
-// proves R-STATE-34
  test('S14 initial entry: a failed post-spawn write retains its survivor and hands the started command outcome to L2', { timeout: 20_000 }, async (t) => {
   const { signLoopWorld } = await import('./process-fixtures.mjs');
   const { mkdirSync, rmSync } = await import('node:fs');
@@ -802,7 +810,6 @@ test('R12: claimed board moves, escalation notes and merges reach the forge afte
 });
 
 // S2 and S22 distinguish a refused observation from permission to continue the run.
-// proves R-STATE-31, R-STATE-37
 test('S2-S22: refused unended or sign.stopped records still end the run with a named refusal', { timeout: 20_000 }, async (t) => {
   const { signLoopWorld, until } = await import('./process-fixtures.mjs');
   for (const refusal of ['survivor.unended', 'sign.stopped']) await t.test(refusal, async (t) => {
@@ -903,7 +910,6 @@ test('S10-S11: a successful empty census or a replaced group or directory admits
 });
 
 // The verb must render L3's named report independently of a successful stop-event append.
-// proves R-STATE-37
 test('S1 S9 S14a S15 S16 S21 S22 output: the real run verb names every sign kind and a refused sign.stopped', { timeout: 20_000 }, async (t) => {
   const { optionalWorld, optionalRun } = await import('./optional-config-world.mjs');
   const { minimalConfig } = await import('./optional-config.mjs');
@@ -999,7 +1005,6 @@ test('S3 S7 S12 S15 S16 S19 S21 verb: every refused start records and prints its
 });
 
 // Same-run stops must reach the public verb as well as preserving L1's record.
-// proves R-STATE-37
 test('S1 S2 S9 S14a S22 verb: an ending dispatch or failed write stops actual run with named output', { timeout: 20_000 }, async (t) => {
   const { signVerbWorld, until } = await import('./process-fixtures.mjs');
   const { addTracked } = await import('../src/execution/groups.mjs');
