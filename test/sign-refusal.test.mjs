@@ -111,23 +111,22 @@ test('a recorded pid replaced after the whole-table snapshot receives no destruc
 function refuseRetryKill(world, pid) {
   const row = world.table.get(pid);
   row.refuses = false;
-  let confirmed = false;
+  let readWhileStopped = false;
   let attempts = 0;
   world.inject((_tool, args) => {
-    if (args.at(-1) === 'pid=,lstart=' && row.state === 'T') confirmed = true;
+    if (args[0] === '-p' && args[1].split(',').includes(String(pid)) && args.at(-1) === 'pid=,lstart=' && row.state === 'T') readWhileStopped = true;
     return undefined;
   });
   const signal = world.host.signal;
   world.host.signal = (target, name) => {
     if (target !== pid || name !== 'SIGKILL') return signal(target, name);
     attempts += 1;
-    assert.equal(confirmed, true, 'the retry sent SIGKILL before reading the stopped identity');
     // Bound the faulty retry loop by a second refusal; the test asserts its single attempt below.
     if (attempts > 1) throw new Error('controlled repeated kill refused');
     row.refuses = true;
     try { return signal(target, name); } finally { row.refuses = false; }
   };
-  return () => attempts;
+  return { attempts: () => attempts, readWhileStopped: () => readWhileStopped };
 }
 
 // S3's counterexample drops a settled entry after a reap whose refused kill leaves the same process alive.
@@ -140,12 +139,13 @@ test('S3: a later start retries an unended process and refuses work while it rem
   world.finish(3);
   await running;
   world.signals.length = 0;
-  const attempts = refuseRetryKill(world, world.escaped);
+  const retry = refuseRetryKill(world, world.escaped);
   const [restart] = await Promise.allSettled([killRecordedGroups({ directory: world.directory, sink: world.sink, host: world.host })]);
   assert.equal(restart.status, 'rejected', 'the start proceeded while the recorded process remained');
   assert.ok(world.signals.some(({ target, name }) => target === world.escaped && name === 'SIGKILL'), 'the next start never retried its kill');
   assert.ok(restart.reason.signs.some(({ pid }) => pid === world.escaped));
-  assert.equal(attempts(), 1, 'the start repeated its refused destructive signal');
+  assert.equal(retry.attempts(), 1, 'the start repeated its refused destructive signal');
+  assert.equal(retry.readWhileStopped(), true, 'the retry did not read the stopped identity before its destructive signal');
   assert.equal(world.table.get(world.escaped).state, 'S', 'the refused retry left the process stopped');
   assert.ok(readGroups(world.directory)[0].unended.some(({ pid }) => pid === world.escaped));
 });
@@ -1182,7 +1182,7 @@ test('S3 S7 S12 S15 S16 S19 S21 verb: every refused start records and prints its
     if (row === 'S21') writeFileSync(join(world.state, 'groups.json'), '{');
     if (row === 'S7' || row === 'S12') world.inject((_tool, args) => args.includes(row === 'S7' ? '-A' : '-g') ? { error: Object.assign(new Error('controlled census failed again'), { code: 2 }), stdout: '', stderr: 'controlled census failed again' } : undefined);
     if (row === 'S19') world.table.get(entry.group + 1).outlives = true;
-    const attempts = row === 'S3' ? refuseRetryKill(world, pid) : undefined;
+    const retry = row === 'S3' ? refuseRetryKill(world, pid) : undefined;
     const result = await world.startVerb();
     assert.equal(result.code, 1, result.text);
     assert.equal(world.models.length, 0, 'the refused start ran a command');
@@ -1198,7 +1198,10 @@ test('S3 S7 S12 S15 S16 S19 S21 verb: every refused start records and prints its
     assertNamedSigns(stops[0].signs, result.text, expected);
     if (row === 'S3' || row === 'S19') assert.ok(world.signals.some(({ name }) => name === 'SIGKILL'), 'the start never retried its kill');
     if (row === 'S7') assert.deepEqual(world.signals, [], 'an unconfirmed identity was signalled');
-    if (attempts) assert.equal(attempts(), 1, 'the refused start repeated its destructive signal');
+    if (retry) {
+      assert.equal(retry.attempts(), 1, 'the refused start repeated its destructive signal');
+      assert.equal(retry.readWhileStopped(), true, 'the refused start did not read the stopped identity before its destructive signal');
+    }
   });
 });
 
