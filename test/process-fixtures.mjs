@@ -901,7 +901,11 @@ export async function signLoopWorld(t, { numbers = [10, 11], concurrency = 1, se
     postComment: repository.postComment, mergePullRequest: repository.mergePullRequest,
     postIssueComment: repository.postIssueComment, addIssueLabel: repository.addIssueLabel,
   } });
-  const decide = (card, outcomes, options = {}) => nextAction(card, config.kinds, undefined, { roles: config.roles, provisioning: config.provisioning ?? {}, outcomes, sink, ...options });
+  const decisions = [];
+  const decide = (card, outcomes, options = {}) => {
+    decisions.push({ card: card.number, outcomes, options });
+    return nextAction(card, config.kinds, undefined, { roles: config.roles, provisioning: config.provisioning ?? {}, outcomes, sink, ...options });
+  };
   const facts = factsCall({ config, reads: repository.operations, decide });
   const workspace = async (number) => {
     await beforeWorkspace?.(number);
@@ -927,7 +931,7 @@ export async function signLoopWorld(t, { numbers = [10, 11], concurrency = 1, se
     for (const [key, descriptor] of originals) Object.defineProperty(realHost, key, descriptor);
   });
   return { root, state, consumer: main, config, clock, table, host, models, signals, events, sink, repository, fake, l2, engine, start, tip,
-    completed: () => completed, failure: () => failure, inject: base.inject, refuse: (event) => { refusal = event; },
+    decisions, completed: () => completed, failure: () => failure, inject: base.inject, refuse: (event) => { refusal = event; },
     open: (number) => repository.open({ ...pullFor(number), sha: tip }),
   };
 }

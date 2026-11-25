@@ -41,8 +41,11 @@ test('S1: an unended dispatch process stays named and prevents the next dispatch
   assert.equal(result.exit, 3, 'the survivor does not change the command exit');
   const entry = readGroups(world.directory).find(({ dispatch }) => dispatch === 'd-first');
   assert.ok(entry?.unended?.some(({ pid, name, cmd }) => pid === world.escaped && name === 'controlled' && cmd === `controlled ${world.escaped}`), 'the settled dispatch lost its process sign');
+  const spawn = t.mock.method(world.host, 'spawn');
   const [later] = await Promise.allSettled([world.start('d-later')]);
+  assert.equal(spawn.mock.callCount(), 0, 'a later command spawned beside the sign');
   assert.equal(later.status, 'rejected', 'a later command started beside the sign');
+  assert.equal(later.reason.code, 'SIGN_STOPPED', 'the rejection was not the sign refusal');
   assert.ok(later.reason.signs.some(({ kind, pid }) => kind === 'unended' && pid === world.escaped));
 });
 
@@ -107,6 +110,40 @@ test('S3: a later start retries an unended process and refuses work while it rem
   assert.deepEqual(events.filter(({ event, layer }) => event === 'pull' && layer === 'L3').map(({ card }) => card), [10], 'a card was claimed after the record became unreadable');
   assert.ok(result.text.includes(path));
   assert.notEqual(result.code, 0);
+});
+
+// A record can become unreadable after dispatch.end's final read and before take's claim.
+// proves R-STATE-33, R-STATE-37
+test('S13 take: a record unreadable at slot release permits no later pull or dispatch start', { timeout: 20_000 }, async (t) => {
+  const { signLoopWorld, until } = await import('./process-fixtures.mjs');
+  const { writeFileSync } = await import('node:fs');
+  const { join } = await import('node:path');
+  let world;
+  let signAt;
+  world = await signLoopWorld(t, { numbers: [10, 11], accepted: ({ event, card }) => {
+    if (event === 'slot.release' && card === 10) {
+      assert.ok(world.events().some(({ event, card }) => event === 'dispatch.end' && card === 10), 'the sign arose before the last dispatch ended');
+      signAt = world.events().length;
+      writeFileSync(join(world.state, 'groups.json'), '{');
+    }
+  } });
+  const running = world.start();
+  await until(() => world.models.length === 1 || world.completed(), t);
+  assert.equal(world.models.length, 1, 'the premise maker did not start');
+  world.models[0].host.spawn().stdout.write('controlled work\n');
+  world.models[0].finish(3);
+  await until(() => world.completed() || world.models.length > 1, t);
+  assert.equal(typeof signAt, 'number', 'the record never became unreadable at slot release');
+  const after = world.events().slice(signAt);
+  assert.deepEqual(after.filter(({ event, layer }) => event === 'pull' && layer === 'L3'), [], 'take claimed a card after the record became unreadable');
+  assert.deepEqual(after.filter(({ event }) => event === 'dispatch.start'), [], 'a dispatch started after the record became unreadable');
+  await running.catch(() => {});
+  const stopped = world.events().filter(({ event }) => event === 'sign.stopped');
+  assert.equal(stopped.length, 1);
+  const path = join(world.state, 'groups.json');
+  assert.ok(stopped[0].signs.some((sign) => sign.kind === 'record' && sign.path === path && /cannot be read/.test(sign.reason)), 'the stop did not name the unreadable record');
+  const messages = (error) => [error.message, ...(error.errors ?? []).flatMap(messages)];
+  assert.ok(messages(world.failure()).some((message) => message.includes(path)), 'the verb did not receive the record path');
 });
 
 // S16's counterexample kills the recorded group and removes the unreadable unfinished write.
@@ -184,56 +221,68 @@ test('S3: a later start retries an unended process and refuses work while it rem
   assert.equal(world.events().filter(({ event }) => event === 'sign.stopped').length, 1);
 });
 
-// Each control establishes the next role that the corresponding sign must prevent.
- test('R1-R4 and R9: a provisioner maker judge or escalation predecessor sign prevents its next role', { timeout: 20_000 }, async (t) => {
+/** Establishes a role continuation, with or without its predecessor's sign. */
+async function roleContinuation(t, role, signed) {
   const { signLoopWorld, until } = await import('./process-fixtures.mjs');
   const { minimalConfig } = await import('./optional-config.mjs');
   const { card } = await import('./verb-consumer.mjs');
   const { markerComment } = await import('./fake-repository.mjs');
-  for (const role of ['provisioner', 'maker', 'judge', 'escalation predecessor']) for (const signed of [false, true]) await t.test(`${role} ${signed ? 'sign' : 'control'}`, async (t) => {
-    const settings = minimalConfig();
-    if (role === 'provisioner') {
-      settings.provisioning = { install: { run: 'controlled install', required: true, timeout: 60_000 } };
-      settings.kinds.change.provisioning = ['install'];
-    }
-    if (role === 'escalation predecessor') {
-      settings.roles.manager = { ...settings.roles.engineer, agent: '.claude/agents/manager.md' };
-      settings.escalate = { ambiguous: 'manager' };
-    }
-    const world = await signLoopWorld(t, { settings, numbers: role === 'judge' ? [card(10, 'Review')] : [10] });
-    if (role === 'judge') {
-      world.open(10);
-      const owner = markerComment({ card: 10, pull: 1010, head: world.tip, body: card(10, 'Review').body, role: 'owner' });
-      world.repository.comment(1010, owner.body, owner.createdAt);
-    }
-    const running = world.start();
-    await until(() => world.models.length === 1 || world.completed(), t);
-    assert.equal(world.models.length, 1, JSON.stringify(world.events()));
-    await turn(t);
-    const model = world.models[0];
-    if (signed) world.table.get(model.escaped).refuses = true;
-    if (role === 'maker') world.open(10);
-    if (role === 'judge') {
-      const veto = markerComment({ card: 10, pull: 1010, head: world.tip, body: card(10, 'Review').body, verdict: 'needs revision', items: ['unmet'], toSound: 'Make the accepted change.' });
-      world.repository.comment(1010, veto.body, veto.createdAt);
-    }
-    if (role === 'escalation predecessor') await world.repository.postIssueComment(10, ['```rigger-escalation', 'category: ambiguous', 'item: 1', 'reason: A controlled decision is missing.', `dispatch: ${model.dispatch.dispatch}`, '```'].join('\n'));
-    model.finish(role === 'provisioner' ? 3 : 0);
-    await until(() => world.completed() || world.models.length > 1, t);
-    if (!signed) {
-      assert.equal(world.models.length, 2, `${role}'s control did not select its continuation: ${JSON.stringify(world.events())}`);
-      const expected = { provisioner: 'install', maker: 'reviewer', judge: 'engineer', 'escalation predecessor': 'manager' }[role];
-      assert.equal(world.models[1].dispatch.role ?? world.models[1].dispatch.step, expected);
-      world.models[1].finish(3);
-      await running.catch(() => {});
-      return;
-    }
-    assert.equal(world.models.length, 1, 'a continuation command started beside the sign');
+  const settings = minimalConfig();
+  if (role === 'provisioner') {
+    settings.provisioning = { install: { run: 'controlled install', required: true, timeout: 60_000 } };
+    settings.kinds.change.provisioning = ['install'];
+  }
+  if (role === 'escalation predecessor') {
+    settings.roles.manager = { ...settings.roles.engineer, agent: '.claude/agents/manager.md' };
+    settings.escalate = { ambiguous: 'manager' };
+  }
+  const world = await signLoopWorld(t, { settings, numbers: role === 'judge' ? [card(10, 'Review')] : [10] });
+  if (role === 'judge') {
+    world.open(10);
+    const owner = markerComment({ card: 10, pull: 1010, head: world.tip, body: card(10, 'Review').body, role: 'owner' });
+    world.repository.comment(1010, owner.body, owner.createdAt);
+  }
+  const running = world.start();
+  await until(() => world.models.length === 1 || world.completed(), t);
+  assert.equal(world.models.length, 1, JSON.stringify(world.events()));
+  await turn(t);
+  const model = world.models[0];
+  if (signed) world.table.get(model.escaped).refuses = true;
+  if (role === 'maker') world.open(10);
+  if (role === 'judge') {
+    const veto = markerComment({ card: 10, pull: 1010, head: world.tip, body: card(10, 'Review').body, verdict: 'needs revision', items: ['unmet'], toSound: 'Make the accepted change.' });
+    world.repository.comment(1010, veto.body, veto.createdAt);
+  }
+  if (role === 'escalation predecessor') await world.repository.postIssueComment(10, ['```rigger-escalation', 'category: ambiguous', 'item: 1', 'reason: A controlled decision is missing.', `dispatch: ${model.dispatch.dispatch}`, '```'].join('\n'));
+  model.finish(role === 'provisioner' ? 3 : 0);
+  await until(() => world.completed() || world.models.length > 1, t);
+  if (!signed) {
+    assert.equal(world.models.length, 2, `${role}'s control did not select its continuation: ${JSON.stringify(world.events())}`);
+    const expected = { provisioner: 'install', maker: 'reviewer', judge: 'engineer', 'escalation predecessor': 'manager' }[role];
+    assert.equal(world.models[1].dispatch.role ?? world.models[1].dispatch.step, expected);
+    world.models[1].finish(3);
     await running.catch(() => {});
-    assert.equal(world.events().filter(({ event }) => event === 'dispatch').length, 1, 'a continuation was selected beside the sign');
-    assert.equal(world.events().filter(({ event, attempt }) => event === 'attempt.failed' && attempt === 2).length, 0, 'a sign spent attempt 2');
-    assert.equal(world.events().filter(({ event }) => event === 'sign.stopped').length, 1);
-  });
+    return world;
+  }
+  assert.equal(world.models.length, 1, 'a continuation command started beside the sign');
+  await running.catch(() => {});
+  assert.equal(world.events().filter(({ event }) => event === 'dispatch').length, 1, 'a continuation was selected beside the sign');
+  assert.equal(world.events().filter(({ event }) => event === 'sign.stopped').length, 1);
+  return world;
+}
+
+// proves R-STATE-30
+test('R1-R4: a provisioner maker judge or escalation predecessor sign prevents its next role', { timeout: 20_000 }, async (t) => {
+  for (const role of ['provisioner', 'maker', 'judge', 'escalation predecessor']) for (const signed of [false, true]) {
+    await t.test(`${role} ${signed ? 'sign' : 'control'}`, (t) => roleContinuation(t, role, signed));
+  }
+});
+
+// R9 distinguishes a refused next attempt from a failed attempt.
+// proves R-STATE-39
+test('R9: a provisioner sign spends no second attempt', { timeout: 20_000 }, async (t) => {
+  const world = await roleContinuation(t, 'provisioner', true);
+  assert.equal(world.events().filter(({ event, attempt }) => event === 'attempt.failed' && attempt === 2).length, 0, 'a sign spent attempt 2');
 });
 
 // R6/R7's counterexample stops a peer whose command started before the sign, or loses its own exit.
@@ -266,12 +315,12 @@ test('S3: a later start retries an unended process and refuses work while it rem
     assert.ok(world.events().some(({ event, dispatch, exit }) => event === 'dispatch.end' && dispatch === peer.dispatch.dispatch && exit === 7));
     assert.equal(world.models.length, 2, 'later work started beside the sign');
     assert.equal(world.events().filter(({ event }) => event === 'sign.stopped').length, 1);
+    if (panel) assert.ok(world.decisions.some(({ options }) => options.judged && ['reviewer', 'architect'].every((role) => options.judged[role]?.decision !== undefined)), 'L3 discarded the completed panel decisions beside a sign');
   });
 });
 
-// S14a's counterexample loses a failed tracked-set rewrite while its newly observed process is alive.
-// proves R-STATE-34
- test('S14a: a failed record write is a sign before the dispatch ends and clears only after a successful gone read', { timeout: 10_000 }, async (t) => {
+/** A failed tracked-set write stays a sign until a successful read shows its process gone. */
+async function failedWriteUntilGone(t) {
   const { mkdirSync, rmSync } = await import('node:fs');
   const { join } = await import('node:path');
   const { signsStanding } = await import('../src/execution/run.mjs');
@@ -294,7 +343,7 @@ test('S3: a later start retries an unended process and refuses work while it rem
   rmSync(partial, { recursive: true });
   world.finish();
   await running;
-});
+}
 
 // S14c's counterexample loses a tracked process from both the record and memory at a budget-limited exit.
 // proves R-STATE-34
@@ -433,35 +482,43 @@ test('S3: a later start retries an unended process and refuses work while it rem
   });
 });
 
-// S7 must not signal an identity an unreadable table cannot confirm; S8 must admit an unreaped exit.
- test('S7-S8: only a successful table read shows a process gone, and a zombie is gone', { timeout: 10_000 }, async (t) => {
+/** Exercises the start's process identity boundary with a documented table answer. */
+async function startAfterProcessRead(t, observation) {
   const { writeGroups } = await import('../src/execution/groups.mjs');
-  for (const observation of ['failed read', 'unreadable start', 'zombie', 'absent', 'reused pid']) await t.test(observation, async (t) => {
-    const world = signWorld(t);
-    for (const row of world.table.values()) row.state = 'Z';
-    world.table.get(world.escaped).state = observation === 'zombie' ? 'Z' : 'S';
-    writeGroups(world.directory, [{ group: world.group, started: Date.UTC(2026, 9, 29, 12) / 1000, dispatch: 'd-ended', settled: true,
-      unended: [{ pid: world.escaped, started: Date.UTC(2026, 9, 29, 12) / 1000, name: 'controlled', cmd: `controlled ${world.escaped}` }] }]);
-    if (observation === 'absent') world.table.delete(world.escaped);
-    if (observation === 'reused pid') world.table.get(world.escaped).started = 'Thu Oct 29 12:00:01 2026';
-    if (['failed read', 'unreadable start'].includes(observation)) world.inject((_tool, args) => args.includes('-A') && args.at(-1) === 'pid=,stat=,lstart='
-      ? observation === 'failed read' ? { error: Object.assign(new Error('table unavailable'), { code: 2 }), stdout: '', stderr: 'table unavailable' }
-        : { status: 0, stdout: `${world.escaped} S no readable start\n`, stderr: '' } : undefined);
-    const [ran] = await Promise.allSettled([killRecordedGroups({ directory: world.directory, sink: world.sink, host: world.host })]);
-    assert.deepEqual(world.signals, [], 'an unconfirmed or exited process was signalled');
-    if (['failed read', 'unreadable start'].includes(observation)) {
-      assert.equal(ran.status, 'rejected');
-      assert.ok(ran.reason.signs.some(({ pid }) => pid === world.escaped));
-    } else {
-      assert.equal(ran.status, 'fulfilled');
-      const next = trackerWorld(world.clock, world.group + 100, world.table);
-      const running = world.start('d-after-zombie', { host: next.host });
-      await turn(t);
-      next.finish();
-      await running;
-      assert.ok(world.events.some(({ event, dispatch }) => event === 'dispatch.start' && dispatch === 'd-after-zombie'));
-    }
-  });
+  const world = signWorld(t);
+  for (const row of world.table.values()) row.state = 'Z';
+  world.table.get(world.escaped).state = observation === 'zombie' ? 'Z' : 'S';
+  writeGroups(world.directory, [{ group: world.group, started: Date.UTC(2026, 9, 29, 12) / 1000, dispatch: 'd-ended', settled: true,
+    unended: [{ pid: world.escaped, started: Date.UTC(2026, 9, 29, 12) / 1000, name: 'controlled', cmd: `controlled ${world.escaped}` }] }]);
+  if (observation === 'absent') world.table.delete(world.escaped);
+  if (observation === 'reused pid') world.table.get(world.escaped).started = 'Thu Oct 29 12:00:01 2026';
+  if (['failed read', 'unreadable start'].includes(observation)) world.inject((_tool, args) => args.includes('-A') && args.at(-1) === 'pid=,stat=,lstart='
+    ? observation === 'failed read' ? { error: Object.assign(new Error('table unavailable'), { code: 2 }), stdout: '', stderr: 'table unavailable' }
+      : { status: 0, stdout: `${world.escaped} S no readable start\n`, stderr: '' } : undefined);
+  const [ran] = await Promise.allSettled([killRecordedGroups({ directory: world.directory, sink: world.sink, host: world.host })]);
+  assert.deepEqual(world.signals, [], 'an unconfirmed or exited process was signalled');
+  if (['failed read', 'unreadable start'].includes(observation)) {
+    assert.equal(ran.status, 'rejected');
+    assert.ok(ran.reason.signs.some(({ pid }) => pid === world.escaped));
+  } else {
+    assert.equal(ran.status, 'fulfilled');
+    const next = trackerWorld(world.clock, world.group + 100, world.table);
+    const running = world.start('d-after-zombie', { host: next.host });
+    await turn(t);
+    next.finish();
+    await running;
+    assert.ok(world.events.some(({ event, dispatch }) => event === 'dispatch.start' && dispatch === 'd-after-zombie'));
+  }
+}
+
+// proves R-STATE-31
+test('S7: an unconfirmed unended process refuses work without receiving a signal', { timeout: 10_000 }, async (t) => {
+  for (const observation of ['failed read', 'unreadable start']) await t.test(observation, (t) => startAfterProcessRead(t, observation));
+});
+
+// proves R-STATE-38
+test('S8: a successful gone read including an unreaped exit permits the next dispatch', { timeout: 10_000 }, async (t) => {
+  for (const observation of ['zombie', 'absent', 'reused pid']) await t.test(observation, (t) => startAfterProcessRead(t, observation));
 });
 
 // A failed identity read proves neither a directory gone nor a replacement at its path.
@@ -502,54 +559,67 @@ test('S3: a later start retries an unended process and refuses work while it rem
   assert.equal(world.events().filter(({ event }) => event === 'sign.stopped').length, 1);
 });
 
-// S14a must refuse another claim while the omitted process runs; S14b must allow it once gone before take.
-// proves R-STATE-34
- test('S14a-S14b: take weighs a failed write before claiming while another dispatch is still running', { timeout: 20_000 }, async (t) => {
+/** Makes a failed write before take, optionally showing its omitted process gone first. */
+async function takeAfterFailedWrite(t, clear) {
   const { signLoopWorld, until } = await import('./process-fixtures.mjs');
   const { mkdirSync, rmSync } = await import('node:fs');
   const { join } = await import('node:path');
-  for (const clear of [false, true]) await t.test(clear ? 'S14b gone before take' : 'S14a still alive at take', async (t) => {
-    const world = await signLoopWorld(t, { concurrency: 2, numbers: [10, 11, 12] });
-    const running = world.start();
-    await until(() => world.models.length === 2 || world.completed(), t);
-    assert.equal(world.models.length, 2, JSON.stringify(world.events()));
-    await turn(t);
-    const [first, second] = world.models;
-    const omitted = first.escaped + 1;
-    const partial = join(world.state, 'groups.json.partial');
-    mkdirSync(partial);
-    world.table.set(omitted, { ...world.table.get(first.escaped), pid: omitted, parent: first.escaped, group: omitted, cmd: `controlled ${omitted}` });
-    await world.clock.advance(1000);
-    await turn(t);
-    assert.equal(readGroups(world.state).find(({ group }) => group === first.group).tracked?.some(({ pid }) => pid === omitted) ?? false, false);
-    rmSync(partial, { recursive: true });
-    if (clear) world.table.delete(omitted);
-    second.host.spawn().stdout.write('controlled work\n');
-    second.finish(7);
-    await until(() => world.events().some(({ event, card }) => event === 'slot.release' && card === second.dispatch.card), t);
-    await turn(t);
-    if (clear) {
-      first.host.spawn().stdout.write('controlled work\n');
-      first.finish(3);
-      await until(() => world.models.length === 3 || world.completed(), t);
-      assert.equal(world.models.length, 3, 'a read showing the omitted process gone still stopped later work');
-      assert.ok(world.events().some(({ event, dispatch }) => event === 'dispatch.start' && dispatch === world.models[2].dispatch.dispatch), 'the later dispatch start was not recorded');
-      world.models[2].host.spawn().stdout.write('controlled work\n');
-      world.models[2].finish(3);
-    } else {
-      assert.deepEqual(world.events().filter(({ event }) => event === 'pull').map(({ card }) => card), [10, 11], 'take claimed beside an omitted live process');
-      assert.equal(world.completed(), false, 'the run ended while its first dispatch ran');
-    }
-    if (!clear) {
-      first.host.spawn().stdout.write('controlled work\n');
-      first.finish(3);
-    }
-    await running.catch(() => {});
-    const stops = world.events().filter(({ event }) => event === 'sign.stopped');
-    if (clear) assert.deepEqual(stops, []);
-    else assert.ok(stops[0]?.signs.some(({ kind, path, reason }) => kind === 'write' && path === join(world.state, 'groups.json') && typeof reason === 'string'));
-  });
+  const world = await signLoopWorld(t, { concurrency: 2, numbers: [10, 11, 12] });
+  const running = world.start();
+  await until(() => world.models.length === 2 || world.completed(), t);
+  assert.equal(world.models.length, 2, JSON.stringify(world.events()));
+  await turn(t);
+  const [first, second] = world.models;
+  const omitted = first.escaped + 1;
+  const partial = join(world.state, 'groups.json.partial');
+  mkdirSync(partial);
+  world.table.set(omitted, { ...world.table.get(first.escaped), pid: omitted, parent: first.escaped, group: omitted, cmd: `controlled ${omitted}` });
+  await world.clock.advance(1000);
+  await turn(t);
+  assert.equal(readGroups(world.state).find(({ group }) => group === first.group).tracked?.some(({ pid }) => pid === omitted) ?? false, false);
+  rmSync(partial, { recursive: true });
+  if (clear) world.table.delete(omitted);
+  second.host.spawn().stdout.write('controlled work\n');
+  second.finish(7);
+  await until(() => world.events().some(({ event, card }) => event === 'slot.release' && card === second.dispatch.card), t);
+  await turn(t);
+  if (clear) {
+    first.host.spawn().stdout.write('controlled work\n');
+    first.finish(3);
+    await until(() => world.models.length === 3 || world.completed(), t);
+    assert.equal(world.models.length, 3, 'a read showing the omitted process gone still stopped later work');
+    assert.ok(world.events().some(({ event, dispatch }) => event === 'dispatch.start' && dispatch === world.models[2].dispatch.dispatch), 'the later dispatch start was not recorded');
+    world.models[2].host.spawn().stdout.write('controlled work\n');
+    world.models[2].finish(3);
+  } else {
+    assert.deepEqual(world.events().filter(({ event }) => event === 'pull').map(({ card }) => card), [10, 11], 'take claimed beside an omitted live process');
+    assert.equal(world.completed(), false, 'the run ended while its first dispatch ran');
+  }
+  if (!clear) {
+    first.host.spawn().stdout.write('controlled work\n');
+    first.finish(3);
+  }
+  await running.catch(() => {});
+  const stops = world.events().filter(({ event }) => event === 'sign.stopped');
+  if (clear) assert.deepEqual(stops, []);
+  else {
+    assert.equal(stops.length, 1, 'the failed write did not record exactly one stop');
+    assert.equal(world.models.length, 2, 'a later command started beside the failed write');
+    assert.equal(world.events().filter(({ event }) => event === 'dispatch.start').length, 2, 'a later dispatch start was recorded beside the failed write');
+    assert.ok(stops[0].signs.some(({ kind, path, reason }) => kind === 'write' && path === join(world.state, 'groups.json') && typeof reason === 'string'));
+    const messages = (error) => [error.message, ...(error.errors ?? []).flatMap(messages)];
+    for (const sign of stops[0].signs) assert.ok(messages(world.failure()).some((message) => message.includes(JSON.stringify(sign))), 'the verb did not receive the named failed write');
+  }
+}
+
+// proves R-STATE-34, R-STATE-36, R-STATE-37
+test('S14a: take refuses an omitted live process and waits for the running dispatch, naming the failed write', { timeout: 20_000 }, async (t) => {
+  await failedWriteUntilGone(t);
+  await takeAfterFailedWrite(t, false);
 });
+
+// proves R-STATE-34
+test('S14b: a gone read before take permits a later dispatch after a failed write', { timeout: 20_000 }, (t) => takeAfterFailedWrite(t, true));
 
 // An initial entry write can fail after spawn; its cleanup still owes every unended process a sign.
  test('S14 initial entry: a failed post-spawn write retains its survivor and hands the started command outcome to L2', { timeout: 20_000 }, async (t) => {
@@ -663,11 +733,13 @@ async function planAfter(world) {
     writeFileSync(join(world.state, 'groups.json'), '{');
     signed = true;
   } });
+  const settled = t.mock.method(world.l2, 'settled');
   let spawns = 0;
   world.host.spawn = () => { spawns += 1; throw Object.assign(new Error('controlled provider CLI missing'), { code: 'ENOENT' }); };
   await world.start().catch(() => {});
   assert.equal(signed, true, 'the second attempt never reached its recorded start');
   assert.equal(spawns, 1, 'the command spawned after the sign arose');
+  assert.equal(settled.mock.calls.some(({ arguments: [, outcome] }) => outcome.reason?.code === 'SIGN_STOPPED'), false, 'L3 handed the unstarted maker outcome to L2');
   assert.equal(world.events().filter(({ event, attempt }) => event === 'attempt.failed' && attempt === 1).length, 1, 'the first failure was not established');
   assert.equal(world.events().filter(({ event, attempt }) => event === 'attempt.failed' && attempt === 2).length, 0, 'the refusal spent attempt two');
   const planned = await planAfter(world);
@@ -809,30 +881,34 @@ test('R12: claimed board moves, escalation notes and merges reach the forge afte
   });
 });
 
-// S2 and S22 distinguish a refused observation from permission to continue the run.
-test('S2-S22: refused unended or sign.stopped records still end the run with a named refusal', { timeout: 20_000 }, async (t) => {
+/** A refused containment observation or stop event never permits another command or claim. */
+async function refusedSignRecord(t, refusal) {
   const { signLoopWorld, until } = await import('./process-fixtures.mjs');
-  for (const refusal of ['survivor.unended', 'sign.stopped']) await t.test(refusal, async (t) => {
-    const world = await signLoopWorld(t, { numbers: [10, 11] });
-    const running = world.start();
-    await until(() => world.models.length === 1 || world.completed(), t);
-    await turn(t);
-    const model = world.models[0];
-    world.table.get(model.escaped).refuses = true;
-    world.refuse(refusal);
-    model.finish(3);
-    await until(() => world.events().some(({ event }) => event === 'dispatch.end'), t);
-    assert.equal(world.events().filter(({ event }) => event === 'dispatch').length, 1, 'a continuation was selected beside the sign');
-    await running.catch(() => {});
-    assert.ok(world.failure(), 'the run did not fail');
-    assert.ok(readGroups(world.state)[0].unended.some(({ pid }) => pid === model.escaped), 'a refused observation lost its process sign');
-    assert.equal(world.models.length, 1, 'a later command started');
-    assert.equal(world.events().filter(({ event }) => event === 'pull').length, 1, 'another card was claimed');
-    const messages = (error) => [error.message, ...(error.errors ?? []).flatMap(messages), ...(error.cause ? messages(error.cause) : [])];
-    if (refusal === 'sign.stopped') assert.match(messages(world.failure()).join('\n'), /controlled sink refuses sign\.stopped/, 'the sign.stopped refusal was not handed to the verb');
-    else assert.match(messages(world.failure()).join('\n'), new RegExp(String(model.escaped)), 'the surviving process was not named');
-  });
-});
+  const world = await signLoopWorld(t, { numbers: [10, 11] });
+  const running = world.start();
+  await until(() => world.models.length === 1 || world.completed(), t);
+  await turn(t);
+  const model = world.models[0];
+  world.table.get(model.escaped).refuses = true;
+  world.refuse(refusal);
+  model.finish(3);
+  await until(() => world.events().some(({ event }) => event === 'dispatch.end'), t);
+  assert.equal(world.events().filter(({ event }) => event === 'dispatch').length, 1, 'a continuation was selected beside the sign');
+  await running.catch(() => {});
+  assert.ok(world.failure(), 'the run did not fail');
+  assert.ok(readGroups(world.state)[0].unended.some(({ pid }) => pid === model.escaped), 'a refused observation lost its process sign');
+  assert.equal(world.models.length, 1, 'a later command started');
+  assert.equal(world.events().filter(({ event }) => event === 'pull').length, 1, 'another card was claimed');
+  const messages = (error) => [error.message, ...(error.errors ?? []).flatMap(messages), ...(error.cause ? messages(error.cause) : [])];
+  if (refusal === 'sign.stopped') assert.match(messages(world.failure()).join('\n'), /controlled sink refuses sign\.stopped/, 'the sign.stopped refusal was not handed to the verb');
+  else assert.match(messages(world.failure()).join('\n'), new RegExp(String(model.escaped)), 'the surviving process was not named');
+}
+
+// proves R-STATE-31
+test('S2: a refused unended record still retains the process sign and ends the run', { timeout: 20_000 }, (t) => refusedSignRecord(t, 'survivor.unended'));
+
+// proves R-STATE-37
+test('S22: a refused sign.stopped still ends the run with a named refusal', { timeout: 20_000 }, (t) => refusedSignRecord(t, 'sign.stopped'));
 
 // S17 separates a dispatch's signs from an unrelated L0 command's survivors.
 test('S17: an unended command outside dispatch does not prevent dispatch work', { timeout: 10_000 }, async (t) => {

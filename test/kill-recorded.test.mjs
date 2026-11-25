@@ -1450,7 +1450,7 @@ test('R8: given a record whose tracked process has no start time, or a pid of 0,
 });
 
 // Host reason: OS behaviour; a macOS table read must show that an unended pid has exited or belongs to another process, without signalling its replacement.
-// Deterministic counterpart: test/sign-refusal.test.mjs :: S7-S8: only a successful table read shows a process gone, and a zombie is gone
+// Deterministic counterpart: test/sign-refusal.test.mjs :: S8: a successful gone read including an unreaped exit permits the next dispatch
 // proves R-STATE-38
 test('S4-S6: a later start works after an exited or reused unended pid, including a prior recorded.unended', SETTLES_WITHIN, async (t) => {
   const { dispatch } = await import('../src/execution/run.mjs');

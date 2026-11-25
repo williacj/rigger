@@ -20,21 +20,79 @@ import { startFailure } from '../substrate/process.mjs';
 export const RECORD_REFUSED = 'RECORD_REFUSED';
 
 /**
- * Runs one dispatch through L0, pairing every recorded start with its end and preserving the
- * command's exit code and output through refused events and containment that leaves a sign.
- * `workspace` and `scratch` identify the dispatch's directories, `folder` its provider folder,
- * and `facts` and `digest` the evidence L2 composed. A workspace's command inherits `gitEnvironment`.
+ * Runs dispatch `id`'s `command` with `args` in `cwd` under exactly `env`, for at most `timeout`
+ * milliseconds, and settles on L0's result for it: the exit code `exit`, whether the timeout
+ * ended it, and the output as bytes, `stdout` and `stderr`. `input`, where the caller gives it, is
+ * written to the command's standard input. `card` is the dispatch's card, where
+ * it has one. `directory` is the state directory of the repository the dispatch serves, and `sink`
+ * is L5's, through which L1 records the dispatch and L0 what it kills, under this dispatch and its
+ * card. `clock` reads milliseconds for the dispatch's duration, and is the process's own unless a
+ * test gives one. `host` supplies L0's operating-system answers where a test gives one; `readTimeout` bounds its reads.
  *
- * The record is checked before its writability probe, after workspace placement and immediately
- * before L0's synchronous spawn. A sign refuses the command without classing an environment
- * failure. L0 hands containment signs through `onSigns` before emitting events; L1 retains their
- * entry even where the sink refuses those events. Each outcome carries the signs still standing.
+ * `workspace`, where the caller gives one, is the card's workspace the dispatch runs in, and `cwd`
+ * is then its working directory there. `dispatch.start` names the workspace, the command's
+ * environment is `env` less every variable that redirects git (`gitEnvironment`), and a `cwd`
+ * whose real path lies outside the workspace starts nothing, as a command that never started
+ * (the architect's ruling 1, A7 and A8, on #423). Every `dispatch.start` carries the timeout.
  *
- * Once whole containment settles, an entry without a sign goes; one kept for its signs is marked
- * `settled`. Exit cleanup past its budget keeps the entry unmarked. `dispatch.end.kept` describes
- * an unsearched directory or a record write refused, not ordinary sign retention. Provider-folder
- * sweeping and event refusals preserve the command result as before. ARCHITECTURE.md, "Signs of
- * an earlier dispatch's process", owns the ordering and removal conditions.
+ * The workspace's real path is the dispatch's directory. L1 hands it to L0, whose census kills
+ * every process of Rigger's own user working there once the group is empty, and records it in the
+ * entry, so a later start does the same (`ARCHITECTURE.md`, "Failure model"). `scratch`, which
+ * `roleDispatch` hands for a role's dispatch and a step's lacks, is the dispatch's scratch
+ * directory, and L1 does the same with its real path, recording it in the entry with its device
+ * and inode as `scratch` (the architect's ruling 20 on #467). One that cannot be read starts
+ * nothing, as a command that never started. A workspace that is
+ * an entry's directory, or lies under one, or holds one, starts nothing, as a command that never
+ * started, naming the directory. The same L0 host supplies the directory-census tool where a test gives one.
+ *
+ * For a role's dispatch, `roleDispatch` also hands `facts`, the facts L2 attached to identify the
+ * work, and `digest`, a digest of the evidence L2 composed, and `dispatch.start` carries each it is
+ * given as given (`ARCHITECTURE.md`, "Telemetry").
+ * It may also hand `folder`, the adapter's `{ home, name }` for a CLI session folder under
+ * `<home>/projects/`. L1 lists it before L0 starts the command and removes only paths absent from
+ * that listing once L0 settles. `dispatch.end` names paths or a reason in `folderLeft` only where
+ * a sweep left something or could not safely run.
+ *
+ * The order is fixed (the architect's ruling 2, §4, on #332): L1 appends `dispatch.start`; shows
+ * the record writable; has L0 spawn the command, and writes the entry; L0 runs the command, kills
+ * what is left of its group, and settles; L1 retains any signs or removes the sign-free entry,
+ * appends `dispatch.timeout` where the timeout ended the command, then `dispatch.end`, and settles. Every start L1 records gets
+ * exactly one end, which carries the exit code and the duration where the command ran, and why it
+ * did not start where it never did.
+ *
+ * On Rigger's own exit before L1 has recorded the end, whether the command is still running or has
+ * exited while the call is in flight, the order is L0's exit cleanup's: L0 kills what is left of
+ * the group and records each kill; L1 retains any signs or removes the sign-free entry and
+ * appends `dispatch.end`, carrying the exit code L0 hands it, which is the command's own where it had exited. Where L0 could not read
+ * the command's status, the end carries no exit code, and says as `unread` why. Where the record
+ * refuses the removal, the end still goes, saying as `kept` which entry was kept and why, and so it
+ * does where L0 left the group's directories unsearched, whose entry L1 keeps for the next start
+ * (`R-STATE-28`). The sink's
+ * refusal of that end has no caller left to reach, so L0 writes it to standard error, on a line
+ * naming the event, the dispatch and its card. A process kept running past its ending has the call
+ * settle as before, and records nothing more of the dispatch.
+ *
+ * A refused start starts nothing, and the call rejects with an `EVENT_REFUSED` failure naming it.
+ * Before L0's synchronous spawn, L1 reads its record and failed-write memory. A standing sign
+ * rejects with `SIGN_STOPPED`, naming each sign, without starting the command or classing an
+ * environment failure. Each dispatch outcome carries the signs still standing when it settles.
+ * L0 hands its containment signs to L1 before emitting events, so a refused event loses none.
+ * An environment failure that keeps the command from starting rejects with `NOT_STARTED`, a
+ * state directory whose record cannot be written included. Where the sink refuses the timeout or the end, every append is
+ * still tried, and the call rejects with an `EVENT_REFUSED` failure naming the dispatch, its card
+ * and each unrecorded event, carrying the result where the command ran. L0's own refusal takes
+ * those events onto it; any other failure becomes the refusal's `cause`.
+ *
+ * While the command runs, the record in `directory` holds an entry naming its process group, the
+ * dispatch and the card (`ARCHITECTURE.md`, "Failure model"). Once whole containment settles,
+ * L1 retains each `unended` or `unread` sign in that entry, marked `settled`, until a read shows
+ * it gone. A sign-free entry goes. Exit cleanup past its budget keeps the entry unmarked for
+ * the next start's whole cleanup. Any other rejection leaves the entry it wrote, and so does
+ * an ending that runs no code, for a later start to settle. Where the record
+ * refuses the removal after a refused event, the refusal still reaches the caller, carrying the
+ * record's failure as `recordFailure`. Where it refuses the removal after the command settled, the
+ * call rejects with a `RECORD_REFUSED` failure carrying the result, and the record's failure as
+ * `recordFailure`.
  */
 export async function dispatch({ id, card, directory, sink, provider, command, args, input, cwd, workspace, scratch, env, folder, timeout, facts, digest, host, readTimeout, clock = () => performance.now() }) {
   // L3 allocates the id (the architect's ruling 1, P4 on #332), and an entry without one could
@@ -77,7 +135,6 @@ export async function dispatch({ id, card, directory, sink, provider, command, a
     const { unread, held } = scratch === undefined ? {} : scratchHeld(scratch);
     if (unread !== undefined) throw startFailure(Object.assign(new Error(`dispatch ${id} did not start ${command}: ${unread}`), { code: NOT_STARTED }), 'directory-unusable');
     if (folder !== undefined) folderListing = listCliFolder(folder);
-    startingGroups(directory, { host, readTimeout });
     result = await runCommand({
       command,
       args,
@@ -123,7 +180,7 @@ export async function dispatch({ id, card, directory, sink, provider, command, a
         }
       },
       // On Rigger's own exit, L0 kills and records the group, and then hands it here with how the
-      // command ended, its exit code or why its status could not be read, to remove its entry and
+      // command ended, its exit code or why its status could not be read, to retain its signs or remove its sign-free entry and
       // record the dispatch's end, which says why the entry was kept where the record refused its
       // removal. No caller is left to hear of a
       // refused end, so L0 writes this refusal to standard error. L0 can hand over a dispatch
@@ -329,11 +386,26 @@ function refused(id, card, unrecorded, result) {
 }
 
 /**
- * Reaps a previous run's record, reading both it and an unfinished write before acting on either.
- * Every entry is tried. Settled entries owe only their signs; the rest owe their whole cleanup.
- * A successful rewrite retains only outstanding signs and entries whose group was unconfirmed.
- * An unreadable file is untouched and kills nothing. A surviving sign refuses all work at this
- * start. ARCHITECTURE.md, "Signs of an earlier dispatch's process", gives the start's steps.
+ * Ends what a dead engine left: each process group the record in `directory` names, where L0
+ * confirms the group is the one recorded, recording each kill through `sink` under the entry's
+ * dispatch and card (`ARCHITECTURE.md`, "Failure model"), and where the entry names the dispatch's
+ * directory, every process working there. `host` supplies L0's operating-system answers and `readTimeout` bounds its reads
+ * where the caller gives them.
+ *
+ * L1 reads the record and any unfinished write before acting on either. An unreadable file
+ * fails whole, naming its path, before anything is killed or rewritten. A readable unfinished
+ * write contributes each extra process or group to the entries the start reaps.
+ * Every entry is tried whatever became of those before it. An entry marked `settled` owes only
+ * its signs; every other entry owes its whole cleanup. Afterwards the record keeps entries
+ * whose group L0 could not confirm, because a later start may, and every sign not shown gone.
+ * The call rejects naming each unconfirmed entry, each sign and each kill the sink refused,
+ * with its dispatch id and card. A refused kill event alone keeps no entry whose cleanup
+ * settled without a sign. Where the record refuses its rewrite, that failure accompanies any
+ * existing rejection as `recordFailure`, preserving the unconfirmed groups and refused kills.
+ *
+ * The successful rewrite replaces the unfinished write, retaining every sign its reap left.
+ * A standing sign refuses all work at this start. ARCHITECTURE.md, "Signs of an earlier
+ * dispatch's process", gives the start's ordering and removal conditions.
  */
 export async function killRecordedGroups({ directory, sink, host, readTimeout }) {
   let entries;
