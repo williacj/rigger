@@ -29,6 +29,38 @@ function signWorld(t) {
   return { ...world, clock, events, sink, directory, start };
 }
 
+/** Independently expected fields must occur together in both structured and printable sign reports. */
+function assertNamedSigns(signs, output, expected) {
+  const messages = (value) => typeof value === 'string' ? [value] : value === undefined ? []
+    : [value.message, ...(value.errors ?? []).flatMap(messages), ...messages(value.cause)];
+  const prefix = "signs of an earlier dispatch's process: ";
+  const printed = messages(output).flatMap((message) => message.split('\n').flatMap((line) => {
+    const start = line.indexOf(prefix);
+    if (start < 0) return [];
+    const text = line.slice(start + prefix.length);
+    for (let end = 0; end < text.length; end += 1) if (text[end] === ']') {
+      try { const report = JSON.parse(text.slice(0, end + 1)); if (Array.isArray(report)) return [report]; } catch { /* A bracket inside a quoted value is not the array's end. */ }
+    }
+    return [];
+  }));
+  for (const report of [...(signs === undefined ? [] : [signs]), ...printed]) for (const sign of report) {
+    const keys = sign.kind === 'unended' ? ['pid', 'name', 'cmd'] : sign.kind === 'read'
+      ? ['reason', ...['group', 'directory', 'dispatch'].filter((key) => Object.hasOwn(sign, key))] : ['path', 'reason'];
+    assert.ok(['unended', 'read', 'record', 'write'].includes(sign.kind), 'the report lost its sign kind');
+    if (sign.kind === 'read') assert.equal(keys.length, 2, 'the read sign must name exactly what could not be read');
+    for (const key of keys) assert.ok(key === 'pid' || key === 'group'
+      ? Number.isSafeInteger(sign[key]) && sign[key] > 1 : typeof sign[key] === 'string' && sign[key].length > 0,
+    `the report lost ${sign.kind}.${key}`);
+  }
+  for (const required of expected) {
+    const entries = Object.entries(required);
+    const matches = (sign) => entries.every(([key, value]) => value instanceof RegExp
+      ? typeof sign[key] === 'string' && value.test(sign[key]) : sign[key] === value);
+    if (signs !== undefined) assert.ok(signs.some(matches), `structured report lost the required ${required.kind} details`);
+    assert.ok(printed.some((report) => report.some(matches)), `printable report lost the required ${required.kind} details`);
+  }
+}
+
 // S1's counterexample removes the entry when containment settles despite a refused descendant kill.
 // proves R-STATE-30, R-STATE-31, R-STATE-37
 test('S1: an unended dispatch process stays named and prevents the next dispatch command', { timeout: 10_000 }, async (t) => {
@@ -47,7 +79,56 @@ test('S1: an unended dispatch process stays named and prevents the next dispatch
   assert.equal(later.status, 'rejected', 'a later command started beside the sign');
   assert.equal(later.reason.code, 'SIGN_STOPPED', 'the rejection was not the sign refusal');
   assert.ok(later.reason.signs.some(({ kind, pid }) => kind === 'unended' && pid === world.escaped));
+  assertNamedSigns(later.reason.signs, later.reason, [{ kind: 'unended', pid: world.escaped, name: 'controlled', cmd: `controlled ${world.escaped}` }]);
 });
+
+// A successful snapshot cannot authorize a kill after its pid has been given to another process.
+test('a recorded pid replaced after the whole-table snapshot receives no destructive retry', { timeout: 10_000 }, async (t) => {
+  const { writeGroups } = await import('../src/execution/groups.mjs');
+  const world = signWorld(t);
+  const started = Date.UTC(2026, 9, 29, 12) / 1000;
+  writeGroups(world.directory, [{ group: world.group, started, dispatch: 'd-earlier', settled: true,
+    unended: [{ pid: world.escaped, started, name: 'controlled', cmd: `controlled ${world.escaped}` }] }]);
+  let replaced = false;
+  const read = world.host.spawnSync;
+  world.host.spawnSync = (tool, args, options) => {
+    const answer = read(tool, args, options);
+    if (!replaced && args.at(-1) === 'pid=,stat=,lstart=') {
+      assert.ok(answer.stdout.includes(`${world.escaped} S Thu Oct 29 12:00:00 2026`), 'premise: the snapshot did not name the recorded identity');
+      world.table.get(world.escaped).started = 'Thu Oct 29 12:00:01 2026';
+      replaced = true;
+    }
+    return answer;
+  };
+  await killRecordedGroups({ directory: world.directory, sink: world.sink, host: world.host }).catch(() => {});
+  assert.equal(replaced, true, 'the pid replacement was not established after the snapshot');
+  assert.equal(world.signals.some(({ target, name }) => target === world.escaped && name === 'SIGKILL'), false,
+    'the start killed the replacement before confirming its identity while stopped');
+  assert.equal(world.table.get(world.escaped).state, 'S', 'the replacement was not left running');
+});
+
+/** kill(2)'s EPERM fault at SIGKILL alone, after ps(1)'s stopped identity read. */
+function refuseRetryKill(world, pid) {
+  const row = world.table.get(pid);
+  row.refuses = false;
+  let confirmed = false;
+  let attempts = 0;
+  world.inject((_tool, args) => {
+    if (args.at(-1) === 'pid=,lstart=' && row.state === 'T') confirmed = true;
+    return undefined;
+  });
+  const signal = world.host.signal;
+  world.host.signal = (target, name) => {
+    if (target !== pid || name !== 'SIGKILL') return signal(target, name);
+    attempts += 1;
+    assert.equal(confirmed, true, 'the retry sent SIGKILL before reading the stopped identity');
+    // Bound the faulty retry loop by a second refusal; the test asserts its single attempt below.
+    if (attempts > 1) throw new Error('controlled repeated kill refused');
+    row.refuses = true;
+    try { return signal(target, name); } finally { row.refuses = false; }
+  };
+  return () => attempts;
+}
 
 // S3's counterexample drops a settled entry after a reap whose refused kill leaves the same process alive.
 // proves R-STATE-31, R-STATE-35
@@ -59,10 +140,13 @@ test('S3: a later start retries an unended process and refuses work while it rem
   world.finish(3);
   await running;
   world.signals.length = 0;
+  const attempts = refuseRetryKill(world, world.escaped);
   const [restart] = await Promise.allSettled([killRecordedGroups({ directory: world.directory, sink: world.sink, host: world.host })]);
   assert.equal(restart.status, 'rejected', 'the start proceeded while the recorded process remained');
   assert.ok(world.signals.some(({ target, name }) => target === world.escaped && name === 'SIGKILL'), 'the next start never retried its kill');
   assert.ok(restart.reason.signs.some(({ pid }) => pid === world.escaped));
+  assert.equal(attempts(), 1, 'the start repeated its refused destructive signal');
+  assert.equal(world.table.get(world.escaped).state, 'S', 'the refused retry left the process stopped');
   assert.ok(readGroups(world.directory)[0].unended.some(({ pid }) => pid === world.escaped));
 });
 
@@ -109,6 +193,7 @@ test('S3: a later start retries an unended process and refuses work while it rem
   assert.equal(events.filter(({ event }) => event === 'sign.stopped').length, 1, result.text);
   assert.deepEqual(events.filter(({ event, layer }) => event === 'pull' && layer === 'L3').map(({ card }) => card), [10], 'a card was claimed after the record became unreadable');
   assert.ok(result.text.includes(path));
+  assertNamedSigns(events.find(({ event }) => event === 'sign.stopped').signs, result.text, [{ kind: 'record', path, reason: /Expected property name or '}' in JSON at position 1/ }]);
   assert.notEqual(result.code, 0);
 });
 
@@ -144,6 +229,7 @@ test('S13 take: a record unreadable at slot release permits no later pull or dis
   assert.ok(stopped[0].signs.some((sign) => sign.kind === 'record' && sign.path === path && /cannot be read/.test(sign.reason)), 'the stop did not name the unreadable record');
   const messages = (error) => [error.message, ...(error.errors ?? []).flatMap(messages)];
   assert.ok(messages(world.failure()).some((message) => message.includes(path)), 'the verb did not receive the record path');
+  assertNamedSigns(stopped[0].signs, world.failure(), [{ kind: 'record', path, reason: /Expected property name or '}' in JSON at position 1/ }]);
 });
 
 // S16's counterexample kills the recorded group and removes the unreadable unfinished write.
@@ -160,6 +246,7 @@ test('S13 take: a record unreadable at slot release permits no later pull or dis
   const [ran] = await Promise.allSettled([killRecordedGroups({ directory: world.directory, sink: world.sink, host: world.host })]);
   assert.equal(ran.status, 'rejected', 'a start ignored its unreadable unfinished write');
   assert.ok(ran.reason.signs.some((sign) => sign.kind === 'record' && sign.path === path));
+  assertNamedSigns(ran.reason.signs, ran.reason, [{ kind: 'record', path, reason: /Expected property name or '}' in JSON at position 1/ }]);
   assert.deepEqual(world.signals, [], 'a start killed before it could read both files');
   assert.deepEqual(readGroups(world.directory), record, 'the record changed');
   assert.equal(readFileSync(path, 'utf8'), '{', 'the unfinished write changed');
@@ -182,6 +269,10 @@ test('S13 take: a record unreadable at slot release permits no later pull or dis
   assert.equal(ran.status, 'rejected', 'the extra process in the unfinished write was ignored');
   assert.ok(readGroups(world.directory)[0]?.unended.some(({ pid }) => pid === world.escaped));
   assert.ok(ran.reason.signs.some(({ kind, path: named }) => kind === 'write' && named === join(world.directory, 'groups.json')));
+  assertNamedSigns(ran.reason.signs, ran.reason, [
+    { kind: 'unended', pid: world.escaped, name: 'controlled', cmd: `controlled ${world.escaped}` },
+    { kind: 'write', path: join(world.directory, 'groups.json'), reason: 'an unfinished write named processes not shown gone' },
+  ]);
   assert.equal(existsSync(path), false, 'the successful record rewrite did not consume the unfinished write');
 });
 
@@ -219,6 +310,8 @@ test('S13 take: a record unreadable at slot release permits no later pull or dis
   assert.deepEqual(world.events().filter(({ event }) => event === 'pull').map(({ card }) => card), [10]);
   assert.equal(world.models.length, 1, 'a judge or another maker command started');
   assert.equal(world.events().filter(({ event }) => event === 'sign.stopped').length, 1);
+  assertNamedSigns(world.events().find(({ event }) => event === 'sign.stopped').signs, ran.reason,
+    [{ kind: 'unended', pid: model.escaped, name: 'controlled', cmd: `controlled ${model.escaped}` }]);
 });
 
 /** Establishes a role continuation, with or without its predecessor's sign. */
@@ -609,6 +702,7 @@ async function takeAfterFailedWrite(t, clear) {
     assert.ok(stops[0].signs.some(({ kind, path, reason }) => kind === 'write' && path === join(world.state, 'groups.json') && typeof reason === 'string'));
     const messages = (error) => [error.message, ...(error.errors ?? []).flatMap(messages)];
     for (const sign of stops[0].signs) assert.ok(messages(world.failure()).some((message) => message.includes(JSON.stringify(sign))), 'the verb did not receive the named failed write');
+    assertNamedSigns(stops[0].signs, world.failure(), [{ kind: 'write', path: join(world.state, 'groups.json'), reason: /EISDIR.*groups\.json\.partial/ }]);
   }
 }
 
@@ -678,6 +772,8 @@ test('S14b: a gone read before take permits a later dispatch after a failed writ
   cleanup();
   assert.ok(stderr.includes(join(world.directory, 'groups.json')), 'exit did not name the failed record write');
   assert.ok(stderr.includes('controlled record storage full'), 'exit lost why the write failed');
+  assertNamedSigns(undefined, stderr,
+    [{ kind: 'write', path: join(world.directory, 'groups.json'), reason: 'controlled record storage full' }]);
   assert.equal(fs.existsSync(partial), false, 'an unfinished write survived, so this is not S20');
   assert.equal(world.table.get(world.escaped).state, 'S', 'the process did not outlive exit cleanup');
   world.finish();
@@ -902,6 +998,8 @@ async function refusedSignRecord(t, refusal) {
   const messages = (error) => [error.message, ...(error.errors ?? []).flatMap(messages), ...(error.cause ? messages(error.cause) : [])];
   if (refusal === 'sign.stopped') assert.match(messages(world.failure()).join('\n'), /controlled sink refuses sign\.stopped/, 'the sign.stopped refusal was not handed to the verb');
   else assert.match(messages(world.failure()).join('\n'), new RegExp(String(model.escaped)), 'the surviving process was not named');
+  const reports = (error) => [...(error.signs ?? []), ...(error.errors ?? []).flatMap(reports)];
+  assertNamedSigns(reports(world.failure()), world.failure(), [{ kind: 'unended', pid: model.escaped, name: 'controlled', cmd: `controlled ${model.escaped}` }]);
 }
 
 // proves R-STATE-31
@@ -950,6 +1048,10 @@ test('S9: failed group directory and dispatch reads stop the same run before ano
     const stopped = world.events().find(({ event }) => event === 'sign.stopped');
     assert.ok(stopped?.signs.some(({ kind, reason, group, directory, dispatch }) => kind === 'read' && /census unreadable/.test(reason) && (scope === 'group' ? group === held.group : scope === 'directory' ? directory === held.workspace : dispatch === held.dispatch)), 'the event did not name the failed read');
     assert.match(world.failure().errors.flatMap((error) => [error.message, ...(error.errors ?? []).map(({ message }) => message)]).join('\n'), /census unreadable/, 'the verb did not receive why the read failed');
+    assertNamedSigns(stopped.signs, world.failure(), [{ kind: 'read',
+      ...(scope === 'group' ? { group: world.models[0].group } : scope === 'directory' ? { directory: world.models[0].options.cwd } : { dispatch: world.models[0].dispatch.dispatch }),
+      reason: new RegExp(`controlled ${scope} census unreadable`),
+    }]);
   });
 });
 
@@ -996,6 +1098,7 @@ test('S1 S9 S14a S15 S16 S21 S22 output: the real run verb names every sign kind
   const { join } = await import('node:path');
   for (const kind of ['unended', 'read', 'write', 'unfinished write', 'unread unfinished write', 'record', 'refused stop']) await t.test(kind, async (t) => {
     let world;
+    let group;
     const pid = 900_090_009;
     const name = 'worker "quoted"';
     const cmd = 'controlled worker\nwith newline';
@@ -1004,6 +1107,7 @@ test('S1 S9 S14a S15 S16 S21 S22 output: the real run verb names every sign kind
       await turn(t);
       const state = join(world.consumer, '.rigger');
       const entries = readGroups(state);
+      group = entries[0].group;
       if (kind === 'unended' || kind === 'refused stop') writeGroups(state, entries.map((entry) => ({ ...entry, unended: [{ pid, started: 0, name, cmd }] })));
       if (kind === 'read') writeGroups(state, entries.map((entry) => ({ ...entry, unread: [{ kind: 'group', group: entry.group, reason }] })));
       if (kind === 'record') fs.writeFileSync(join(state, 'groups.json'), '{');
@@ -1044,6 +1148,15 @@ test('S1 S9 S14a S15 S16 S21 S22 output: the real run verb names every sign kind
       assert.ok(stopped[0].signs.some((sign) => sign.kind === expected), JSON.stringify(stopped[0]));
       for (const sign of stopped[0].signs) assert.ok(result.text.includes(JSON.stringify(sign)), 'output and the event did not carry the same named sign');
     }
+    const state = join(world.consumer, '.rigger');
+    const expected = ['unended', 'refused stop'].includes(kind) ? [{ kind: 'unended', pid, name, cmd }]
+      : kind === 'read' ? [{ kind: 'read', group, reason }]
+      : kind === 'unfinished write' ? [
+        { kind: 'unended', pid, name, cmd },
+        { kind: 'write', path: join(state, 'groups.json'), reason: 'an unfinished write named processes not shown gone' },
+      ] : kind === 'write' ? [{ kind: 'write', path: join(state, 'groups.json'), reason: /EISDIR.*groups\.json\.partial/ }]
+      : [{ kind: 'record', path: join(state, kind === 'unread unfinished write' ? 'groups.json.partial' : 'groups.json'), reason: /Expected property name or '}' in JSON at position 1/ }];
+    assertNamedSigns(kind === 'refused stop' ? undefined : stopped[0].signs, result.text, expected);
     if (kind === 'unended') { assert.ok(result.text.includes(JSON.stringify(name))); assert.ok(result.text.includes(JSON.stringify(cmd))); }
     if (kind === 'read') assert.ok(result.text.includes(JSON.stringify(reason)));
     assert.ok(world.events().filter(({ event }) => event === 'pull').length <= 1, 'another card was claimed');
@@ -1069,14 +1182,23 @@ test('S3 S7 S12 S15 S16 S19 S21 verb: every refused start records and prints its
     if (row === 'S21') writeFileSync(join(world.state, 'groups.json'), '{');
     if (row === 'S7' || row === 'S12') world.inject((_tool, args) => args.includes(row === 'S7' ? '-A' : '-g') ? { error: Object.assign(new Error('controlled census failed again'), { code: 2 }), stdout: '', stderr: 'controlled census failed again' } : undefined);
     if (row === 'S19') world.table.get(entry.group + 1).outlives = true;
+    const attempts = row === 'S3' ? refuseRetryKill(world, pid) : undefined;
     const result = await world.startVerb();
     assert.equal(result.code, 1, result.text);
     assert.equal(world.models.length, 0, 'the refused start ran a command');
     const stops = world.events().filter(({ event }) => event === 'sign.stopped');
     assert.equal(stops.length, 1, result.text);
     for (const sign of stops[0].signs) assert.ok(result.text.includes(JSON.stringify(sign)), `the verb did not name ${JSON.stringify(sign)}: ${result.text}`);
+    const expected = ['S3', 'S7'].includes(row) ? [{ kind: 'unended', pid, name: 'controlled', cmd: `controlled ${pid}` }]
+      : row === 'S15' ? [
+        { kind: 'unended', pid, name: 'controlled', cmd: `controlled ${pid}` },
+        { kind: 'write', path: join(world.state, 'groups.json'), reason: 'an unfinished write named processes not shown gone' },
+      ] : ['S12', 'S19'].includes(row) ? [{ kind: 'read', group: entry.group, reason: 'earlier group census failed' }]
+      : [{ kind: 'record', path: join(world.state, row === 'S16' ? 'groups.json.partial' : 'groups.json'), reason: /Expected property name or '}' in JSON at position 1/ }];
+    assertNamedSigns(stops[0].signs, result.text, expected);
     if (row === 'S3' || row === 'S19') assert.ok(world.signals.some(({ name }) => name === 'SIGKILL'), 'the start never retried its kill');
     if (row === 'S7') assert.deepEqual(world.signals, [], 'an unconfirmed identity was signalled');
+    if (attempts) assert.equal(attempts(), 1, 'the refused start repeated its destructive signal');
   });
 });
 
@@ -1130,10 +1252,18 @@ test('S1 S2 S9 S14a S22 verb: an ending dispatch or failed write stops actual ru
       assert.equal(stops.length, 0);
       assert.match(result.text, /controlled sign\.stopped append refused/);
       assert.ok(result.text.includes(String(first.escaped)));
+      assertNamedSigns(undefined, result.text, [{ kind: 'unended', pid: first.escaped, name: 'controlled', cmd: `controlled ${first.escaped}` }]);
     } else {
       assert.equal(stops.length, 1, result.text);
       assert.ok(stops[0].signs.length > 0);
       for (const sign of stops[0].signs) assert.ok(result.text.includes(JSON.stringify(sign)), `the verb lost a named sign: ${result.text}`);
+      const scope = row.split(' ')[1];
+      const expected = row.startsWith('S9') ? [{ kind: 'read',
+        ...(scope === 'group' ? { group: first.group } : scope === 'directory' ? { directory: first.options.cwd } : { dispatch: first.dispatch.dispatch }),
+        reason: new RegExp(`controlled ${scope} census failed`),
+      }] : row === 'S14a' ? [{ kind: 'write', path: join(world.state, 'groups.json'), reason: /EISDIR.*groups\.json\.partial/ }]
+        : [{ kind: 'unended', pid: first.escaped, name: 'controlled', cmd: `controlled ${first.escaped}` }];
+      assertNamedSigns(stops[0].signs, result.text, expected);
     }
   });
 });
