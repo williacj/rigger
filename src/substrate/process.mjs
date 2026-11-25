@@ -1750,7 +1750,13 @@ function* sweeping(directory, lsof, kill, observeAfterKill = false, host = realH
       for (const [pid, state] of after) {
         if (!ours.has(pid) || !state.startsWith('T')) continue;
         ours.delete(pid);
-        if (!sent(pid, 'SIGKILL', kill)) { forbidden.add(pid); resume([pid]); continue; }
+        let accepted = false;
+        try {
+          if (!sent(pid, 'SIGKILL', kill)) continue;
+          accepted = true;
+        } finally {
+          if (!accepted) { forbidden.add(pid); resume([pid]); }
+        }
         killed.add(pid);
         killedNow.push(pid);
         killedAt ??= host.clock.now();
