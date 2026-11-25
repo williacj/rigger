@@ -1185,7 +1185,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       [settled[at]] = await Promise.allSettled([judged(card, judge, repeat, scope)]);
       interrupted ||= settled[at].status === 'rejected' || settled[at].value.halt;
     }
-    const decision = stoppedSigns.length > 0 ? { action: 'ignore' } : ask({ judged: Object.fromEntries(settled.map((each, at) => [answer.judges[at].role, { decision: each.status === 'fulfilled' ? each.value.decision : undefined }])) });
+    const decision = ask({ judged: Object.fromEntries(settled.map((each, at) => [answer.judges[at].role, { decision: each.status === 'fulfilled' ? each.value.decision : undefined }])) });
     remember(decision);
     // A judge L2 held fails the card held, as one that handed back no outcome fails it.
     const ended = settled.map((each, at) => (each.status === 'fulfilled'
