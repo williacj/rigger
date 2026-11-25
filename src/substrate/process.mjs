@@ -1703,6 +1703,7 @@ function* sweeping(directory, lsof, kill, observeAfterKill = false, host = realH
   // Sent the kill, and listed again only while it is still ending, or where it outlives the kill,
   // which `settled` waits on: it is not stopped or killed again.
   const killed = new Set();
+  const forbidden = new Set();
   const locations = new Map();
   // When it first sent a process the kill.
   let killedAt;
@@ -1725,9 +1726,8 @@ function* sweeping(directory, lsof, kill, observeAfterKill = false, host = realH
       // A process the stop could not reach either has gone, and is listed again, since it may have
       // forked first, or is one Rigger may not signal, as a set-user-id program's is, and so not
       // this user's to end. So the census ends at a list holding only processes of the second kind.
-      const forbidden = new Set();
       for (const pid of found) {
-        if (ours.has(pid) || killed.has(pid)) continue;
+        if (ours.has(pid) || killed.has(pid) || forbidden.has(pid)) continue;
         const stop = halt(pid, kill);
         if (stop === 'sent') held.add(pid);
         if (stop === 'EPERM') forbidden.add(pid);
@@ -1750,7 +1750,7 @@ function* sweeping(directory, lsof, kill, observeAfterKill = false, host = realH
       for (const [pid, state] of after) {
         if (!ours.has(pid) || !state.startsWith('T')) continue;
         ours.delete(pid);
-        if (!sent(pid, 'SIGKILL', kill)) continue;
+        if (!sent(pid, 'SIGKILL', kill)) { forbidden.add(pid); resume([pid]); continue; }
         killed.add(pid);
         killedNow.push(pid);
         killedAt ??= host.clock.now();
@@ -2084,7 +2084,6 @@ export async function killRecordedGroup({ group, started, tracked = [], emitter,
   const starts = groupRead ? await startsIn(ps, group, readTimeout, host) : new Map();
   const standing = signProcesses.length === 0 ? { tracked: [] } : processSigns(signProcesses, { host, readTimeout });
   tracked = [...(!settled || unread.some(({ kind }) => kind === 'dispatch') ? tracked : []), ...standing.tracked];
-  const retried = standing.tracked.filter(({ pid }) => sent(pid, 'SIGKILL', kill));
   const pendingReads = [];
   const retainRead = (events, matches) => { if (events.some(([event]) => event.endsWith('.unended'))) pendingReads.push(...unread.filter(matches)); };
   const unended = new Map();
@@ -2110,7 +2109,6 @@ export async function killRecordedGroup({ group, started, tracked = [], emitter,
       kills.push(...ended);
     }
   }
-  for (const member of retried) if (!kills.some(([, fields]) => fields.pid === member.pid) && processSigns([member], { host, readTimeout }).unended.length === 0) kills.push(['recorded.killed', member]);
   handSigns({ child: { pid: group }, onSigns, unreadSigns: pendingReads, tracked: new Map([...starts, ...tracked.map(({ pid, started }) => [pid, started])]) }, kills);
   const unrecorded = record(emitter, kills);
   if (unrecorded.length > 0) throw refused(unrecorded);
