@@ -19,3 +19,5 @@ The baseline at round-1 head 485b0e3fd3f0c7c875b5f0f421e608ede6662895, measured 
 Linux remains unproved under D13 and M8-U97. The authored architecture cell remains subject to the owner's marker at the final head. No label or TQ/M7 card was mutated, and no merge was attempted.
 
 The unchanged Mac containment verifier pins the executable SIGKILL statement as its mutation boundary. Its first run on the initial revision stopped at the missing-anchor guard after a passing control; that attempt earns no mutation credit. Refusal cleanup now runs in finally around the pinned statement, so the verifier can still remove the actual kill. Its source is unchanged. The failure and subsequent complete verification remain recorded separately in the PR.
+
+S3 observes the stopped read of its own pid and asserts that observation after the retry returns. The signal stand-in no longer throws an assertion for a missing read. Removing the stopped recheck now fails the direct named assertion that the retry did not read the stopped identity before its destructive signal; its control and restored runs pass.
