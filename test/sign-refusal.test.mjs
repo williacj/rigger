@@ -1581,3 +1581,111 @@ test('normal exit does not restore a gone entry beside another failed write stil
   assert.ok(entries[0].unended.some(({ pid }) => pid === later.group), 'the other failed write lost its live process');
   assert.deepEqual(world.signals, [], 'exit persistence signalled an unregistered group');
 });
+
+/** The reason an earlier start wrote for the dispatch sign of #1507's row cases. */
+const CENSUS_FAILED = 'the earlier dispatch census failed';
+const OTHER_START = 'Thu Oct 29 12:00:01 2026';
+// The failed and unreadable answers take the forms `startAfterProcessRead` injects for S7, after
+// ps(1)'s contract: a failed read exits non-zero writing to standard error; an unreadable row lists
+// the pid with a start time L0 cannot parse.
+const FAILED = { error: Object.assign(new Error('table unavailable'), { code: 2 }), stdout: '', stderr: 'table unavailable' };
+const startRead = (args) => args.includes('-p') && args.at(-1) === 'pid=,lstart=';
+const wholeRead = (args) => args.includes('-A') && args.at(-1) === 'pid=,stat=,lstart=';
+
+/**
+ * #1507's row case `cell` over a settled entry for dispatch `d-reused` whose only sign is a read
+ * sign of kind `dispatch`, its group gone: each tracked pid is set as `cell.pids` says, and each
+ * read answered as `cell.start` and `cell.whole` say ('table' answers from the table).
+ */
+async function readSignOver(t, cell) {
+  const { writeGroups } = await import('../src/execution/groups.mjs');
+  const world = signWorld(t);
+  const T = Date.UTC(2026, 9, 29, 12) / 1000;
+  world.table.delete(world.group);
+  world.table.delete(world.group + 1);
+  world.table.delete(world.escaped);
+  // A read of the whole table lists at least launchd, whatever has exited.
+  world.table.set(1, { pid: 1, parent: 0, group: 1, started: 'Thu Oct 29 11:00:00 2026', state: 'Ss', name: 'launchd', cmd: '/sbin/launchd' });
+  const pids = cell.pids.map((held, at) => {
+    const pid = world.escaped + at;
+    if (held !== 'absent') world.table.set(pid, { pid, parent: 1, group: pid, started: held === 'recorded' ? 'Thu Oct 29 12:00:00 2026' : OTHER_START, state: held === 'zombie' ? 'Z' : 'S', name: 'daemon', cmd: `daemon ${pid}` });
+    return pid;
+  });
+  writeGroups(world.directory, [{ group: world.group, started: T, dispatch: 'd-reused', settled: true,
+    tracked: pids.map((pid) => ({ pid, started: T })), unread: [{ kind: 'dispatch', reason: CENSUS_FAILED }] }]);
+  const unreadable = (pid) => cell.unreadable?.includes(pid - world.escaped);
+  const rows = (args, columns) => [...world.table.values()].filter(({ pid }) => args.includes('-A') || args[args.indexOf('-p') + 1].split(',').map(Number).includes(pid))
+    .map((row) => `${row.pid} ${columns(row, unreadable(row.pid) ? 'no readable start' : row.started)}\n`).join('');
+  world.inject((_tool, args) => {
+    if (startRead(args)) {
+      const answer = cell.start === 'failed' ? FAILED : cell.start === 'unreadable' ? { status: 0, stdout: rows(args, () => 'no readable start'), stderr: '' } : undefined;
+      if (cell.exits) queueMicrotask(() => world.table.delete(world.escaped));
+      return answer;
+    }
+    if (wholeRead(args)) return cell.whole === 'failed' ? FAILED : cell.unreadable ? { status: 0, stdout: rows(args, (row, start) => `${row.state} ${start}`), stderr: '' } : undefined;
+    return undefined;
+  });
+  const [ran] = await Promise.allSettled([killRecordedGroups({ directory: world.directory, sink: world.sink, host: world.host })]);
+  assert.deepEqual(world.signals.filter(({ target }) => pids.includes(Math.abs(target))), [], 'the start signalled a tracked pid');
+  const live = pids.filter((_pid, at) => cell.pids[at] !== 'absent');
+  for (const pid of live) assert.ok(world.events.some(({ event, pid: named, dispatch }) => event === 'recorded.unended' && named === pid && dispatch === 'd-reused'), `no recorded.unended named ${pid}`);
+  const next = trackerWorld(world.clock, world.group + 100, world.table);
+  const spawned = [];
+  const fixture = { ...next.host };
+  next.host.spawn = (...input) => { spawned.push(input); return fixture.spawn(...input); };
+  const running = world.start('d-after', { host: next.host });
+  await turn(t);
+  next.finish();
+  const [later] = await Promise.allSettled([running]);
+  return { world, ran, later, spawned, pids };
+}
+
+// Each case's counterexample keeps the dispatch's read sign for a tracked pid a successful
+// whole-table read shows is another process, gone, or a zombie, as 6bfc4311 did.
+// proves R-STATE-32, R-STATE-38
+test('C1 C2 C6 C9 Z1: a start goes ahead past a read sign whose tracked pids a whole-table read shows are not the processes recorded', { timeout: 20_000 }, async (t) => {
+  const cases = {
+    'C1 another process at the pid': { pids: ['other'] },
+    'C2 failed start read': { pids: ['other'], start: 'failed' },
+    'C2 unreadable start read': { pids: ['other'], start: 'unreadable' },
+    'C6 several reused or absent pids': { pids: ['other', 'absent', 'other', 'other'] },
+    'C9 other start, then reaped': { pids: ['other'], exits: true },
+    'C9 failed start read, then reaped': { pids: ['other'], start: 'failed', exits: true },
+    'C9 unreadable start read, then reaped': { pids: ['other'], start: 'unreadable', exits: true },
+    'Z1 a zombie of another start': { pids: ['zombie'] },
+  };
+  for (const [name, cell] of Object.entries(cases)) await t.test(name, async (t) => {
+    const { world, ran, later, spawned } = await readSignOver(t, cell);
+    assert.equal(ran.status, 'fulfilled', `the start did not go ahead: ${ran.reason?.message}`);
+    assert.deepEqual(readGroups(world.directory), [], 'the record kept an entry for d-reused');
+    assert.equal(later.status, 'fulfilled', `the later dispatch was refused: ${later.reason?.code} ${later.reason?.message}`);
+    assert.equal(spawned.length, 1, 'the later dispatch started no command');
+  });
+});
+
+// Each case's counterexample clears the dispatch's read sign once a start-time read cannot match a
+// tracked pid, though no successful whole-table read shows that pid is another process.
+// proves R-STATE-32
+test('C3 C4 C7 C8 C10: a start keeps a read sign while no whole-table read shows a tracked pid it could not match is another process', { timeout: 20_000 }, async (t) => {
+  const cases = {
+    'C3 other start, unreadable whole-table start': { pids: ['other'], unreadable: [0] },
+    'C3 failed start read, unreadable whole-table start': { pids: ['other'], start: 'failed', unreadable: [0] },
+    'C3 unreadable starts in both reads': { pids: ['other'], start: 'unreadable', unreadable: [0] },
+    'C4 failed start read, failed whole table': { pids: ['other'], start: 'failed', whole: 'failed' },
+    'C4 unreadable start read, failed whole table': { pids: ['other'], start: 'unreadable', whole: 'failed' },
+    'C7 one pid reused, one unreadable in the whole table': { pids: ['other', 'other'], unreadable: [1] },
+    'C8 other start, failed whole table': { pids: ['other'], whole: 'failed' },
+    'C10 failed start read, recorded start in the whole table': { pids: ['recorded'], start: 'failed' },
+    'C10 unreadable start read, recorded start in the whole table': { pids: ['recorded'], start: 'unreadable' },
+  };
+  for (const [name, cell] of Object.entries(cases)) await t.test(name, async (t) => {
+    const { world, ran, later, spawned } = await readSignOver(t, cell);
+    assert.equal(ran.status, 'rejected', 'the start went ahead');
+    assert.ok(ran.reason.signs?.some((sign) => sign.kind === 'read' && sign.dispatch === 'd-reused' && sign.reason === CENSUS_FAILED), `the start's signs lost the dispatch's read sign: ${JSON.stringify(ran.reason.signs)}`);
+    const held = readGroups(world.directory).find(({ dispatch }) => dispatch === 'd-reused');
+    assert.ok(held?.unread?.some(({ kind, reason }) => kind === 'dispatch' && reason === CENSUS_FAILED), 'the record lost the dispatch read sign');
+    assert.equal(later.status, 'rejected', 'the later dispatch was not refused');
+    assert.equal(later.reason.code, 'SIGN_STOPPED');
+    assert.equal(spawned.length, 0, 'the later dispatch started a command');
+  });
+});

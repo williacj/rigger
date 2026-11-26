@@ -2094,8 +2094,12 @@ export async function killRecordedGroup({ group, started, tracked = [], emitter,
   const retainRead = (events, matches) => { if (events.some(([event]) => event.endsWith('.unended'))) pendingReads.push(...unread.filter(matches)); };
   const unended = new Map();
   const kills = await swept(undefined, { ps, lsof, readTimeout, kill, host }, 'recorded.killed', new Map(tracked.map(({ pid, started: start }) => [pid, start])), unended);
-  kills.push(...[...unended].map(([pid, reason]) => ['recorded.unended', { pid, reason }]));
-  retainRead(kills, ({ kind }) => kind === 'dispatch');
+  const misses = [...unended].map(([pid, reason]) => ['recorded.unended', { pid, reason }]);
+  // A start-time read that cannot match a tracked pid shows nothing gone; only a successful read of
+  // the whole table can (`R-STATE-38`), so only a pid it cannot show gone keeps the dispatch's sign.
+  const unshown = misses.length === 0 || !unread.some(({ kind }) => kind === 'dispatch') ? [] : processSigns(tracked.filter(({ pid }) => unended.has(pid)), { host, readTimeout }).unended;
+  retainRead([...kills, ...misses.filter(([, { pid }]) => unshown.some((each) => each.pid === pid))], ({ kind }) => kind === 'dispatch');
+  kills.push(...misses);
   if (groupRead && recorded(group, started, starts)) {
     const ended = await contain(group, { ps, readTimeout, kill, host }, 'recorded.killed');
     retainRead(ended, ({ kind }) => kind === 'group' || kind === 'dispatch');
