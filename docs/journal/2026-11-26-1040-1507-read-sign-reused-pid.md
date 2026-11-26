@@ -1,4 +1,4 @@
-<!-- ABOUTME: Card 1507's L0 fix: a start clears a settled dispatch's read sign once a whole-table read shows each tracked pid it could not match is not the process recorded. -->
+ABOUTME: Card 1507's L0 fix: a start clears a settled dispatch's read sign once a whole-table read shows each tracked pid it could not match is not the process recorded.
 
 # Card 1507: a read sign over reused tracked pids
 
