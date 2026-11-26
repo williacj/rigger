@@ -234,7 +234,13 @@ acceptance, and its judges rule on it. This guide binds nobody by itself.
    - facts the card predeclares;
    - this repository's owner and name, the logins that work on it, and the commit identity the
      owner configured;
+   - the owner's laptop login name, and paths under its home directory, in citations and evidence;
    - public product and vendor names.
+
+   The entry for the owner's laptop login name and home paths makes no other account, device or
+   name publishable, in such a path or elsewhere. Work may link a comment of this repository that
+   was public before #1485's rules, as linking it is not publishing. Copying private content out of
+   such a comment stays barred.
 2. **Collection.** This rule binds the output of a command run to make evidence or to look at the
    host. The filter runs inside the command, so nothing unfiltered reaches a file, the terminal or
    the agent's context. A private identifier in the spike's own record becomes a fixed placeholder
@@ -257,12 +263,18 @@ acceptance, and its judges rule on it. This guide binds nobody by itself.
 6. **A judge's access.** The owner grants it through the coordinator. It is never posted, and it is
    shown to work before judging. A card that uses private material is judged by hand, on the laptop.
 7. **Private material.** It is captured records, never an agent session's transcript or its log
-   (`R-EVIDENCE-4`).
+   (`R-EVIDENCE-4`). A maker, checker or judge who finds that a file in the archive is an agent
+   session's transcript or its log sets it aside: it stops using the file, and tells the coordinator
+   in a message that is not posted. It goes on with the rest of its work, whether or not that file
+   holds private content. Rule 11 does not apply to that file. Until the owner rules, no maker,
+   checker or judge removes such a file or opens it as evidence. No claim rests on such a file.
 8. **Naming it.** The report lists each private item by a sequential id and the acceptance items it
    supports, and by nothing else. A verdict cites that entry by its path at the head, and gives the
    id, the acceptance item's ordinal, and "establishes" or "does not establish". That is what a
    judge gives for private material under the [code-review skill](../.claude/skills/code-review/SKILL.md)'s
-   step 7, "Findings", and "What you return", item 2.
+   step 7, "Findings", and "What you return", item 2. The report lists each file rule 7 sets aside
+   by an id of the private items' sequence, as found barred, and as removed if the owner has it
+   removed, and by nothing else.
 9. **Privacy check.** Someone who is neither the maker nor a judge of the card makes it, before the
    branch's first push. An image, archive or encoded blob is opened or removed. The checker reads
    each of these, for each class of private content in rule 1:
@@ -287,11 +299,16 @@ acceptance, and its judges rule on it. This guide binds nobody by itself.
       that message, and the verdict is posted when the owner rules.
     - Until the owner rules, nothing is pushed, posted, edited, deleted, closed, force-pushed or
       re-run.
+
+    A maker, the privacy checker or a judge may read a comment of this repository that was public
+    before #1485's rules and go on. Such comments themselves are left for the owner's separate
+    cleanup decision. A maker, the privacy checker or a judge who finds content copied out of such a
+    comment still stops.
 12. **Posts.** A post about such a spike by its card's author, maker, checker, judges or coordinator
     holds the published set or a neutral sentence. No spike evidence is produced in a CI job.
 13. **Adoption.** A spike card that uses a personal machine says that it adopts this section, names
     its checker, and predeclares its publishable facts and the private items an acceptance item
     rests on. It carries three acceptance items, one condition each:
     - the judged head has a rule 10 result, posted before that head was pushed and not edited since;
-    - the report lists each private item as rule 8 says;
+    - the report lists each private item, and each file rule 7 sets aside, as rule 8 says;
     - the pull request's text and files hold no private content as rule 1 defines it.
