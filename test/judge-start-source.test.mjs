@@ -152,9 +152,12 @@ test('a scratch directory the census cannot read back is tagged at L0 by its rea
 });
 
 // The counterexample wraps only the first read and lets a changed record's second read escape unclassified.
-// proves R-FAIL-8
-test('a groups record changed and unreadable on the second dispatch read is reported by L1 as never started and classed R32', SETTLES_WITHIN, async (t) => {
+// proves R-STATE-33
+test('a groups record changed and unreadable on the second dispatch read is reported by L1 as a sign', SETTLES_WITHIN, async (t) => {
   const { request } = layout();
+  let spawned = false;
+  refuseSpawn(t, { before: () => { spawned = true; assert.fail('a command started beside an unreadable record'); } });
+  t.after(() => assert.equal(spawned, false));
   const original = fs.readFileSync;
   let reads = 0;
   t.mock.method(fs, 'readFileSync', (path, ...args) => {
@@ -165,23 +168,23 @@ test('a groups record changed and unreadable on the second dispatch read is repo
   t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
   const [outcome] = await Promise.allSettled([dispatch(request)]);
   assert.equal(reads, 2, 'the initial read succeeded and the changed record was read again');
-  assert.equal(outcome.reason?.code, NOT_STARTED);
-  assert.deepEqual(outcome.reason.startCause, { kind: 'groups-unreadable' });
-  assert.equal(answer({ reviewer: outcome }).next.failure.row, 'R32');
+  recordSign(outcome, request, /EIO reading changed groups/);
 });
 
 // The counterexample books a record read refusal as a write refusal, because it reads inside writeGroups' arguments.
-// proves R-FAIL-8
-test('an unreadable initial groups record is tagged at L1 as a read failure and classed R32', SETTLES_WITHIN, async (t) => {
+// proves R-STATE-33
+test('an unreadable initial groups record is reported by L1 as a sign', SETTLES_WITHIN, async (t) => {
   const { request } = layout();
+  let spawned = false;
+  refuseSpawn(t, { before: () => { spawned = true; assert.fail('a command started beside an unreadable record'); } });
+  t.after(() => assert.equal(spawned, false));
   const original = fs.readFileSync;
   builtin(t, fs, 'readFileSync', (path, ...args) => {
     if (path === join(request.directory, 'groups.json')) throw Object.assign(new Error('EACCES reading groups'), { code: 'EACCES' });
     return original(path, ...args);
   });
   const [outcome] = await Promise.allSettled([dispatch(request)]);
-  assert.deepEqual(outcome.reason?.startCause, { kind: 'groups-unreadable' });
-  assert.equal(answer({ reviewer: outcome }).next.failure.row, 'R32');
+  recordSign(outcome, request, /EACCES reading groups/);
 });
 
 // The counterexample lets an untagged validation refusal escape the host classification.
@@ -280,15 +283,18 @@ test('source cause R29 l0-cwd names an unusable directory before any spawn', SET
 });
 
 // Both reads must reject the whole record for every invalid shape; a later read is not a write failure.
-// proves R-FAIL-8
+// proves R-STATE-33
 test('source inventory covers each invalid groups record at both dispatch reads', SETTLES_WITHIN, async (t) => {
   for (const read of [1, 2]) for (const [shape, value] of [['JSON', '{'], ['list', '{}'], ['entry', '[{"group":1}]']]) await t.test(`${read} / ${shape}`, async (t) => {
     const { request } = layout();
+  let spawned = false;
+  refuseSpawn(t, { before: () => { spawned = true; assert.fail('a command started beside an unreadable record'); } });
+  t.after(() => assert.equal(spawned, false));
     let reads = 0;
     const original = fs.readFileSync;
     builtin(t, fs, 'readFileSync', (path, ...args) => path === join(request.directory, 'groups.json') && ++reads === read ? value : original(path, ...args));
     const [outcome] = await Promise.allSettled([dispatch(request)]);
-    classed(outcome, { kind: 'groups-unreadable' }, 'R32');
+    recordSign(outcome, request, /cannot be read as entries/);
     assert.equal(reads, read);
   });
 });
@@ -365,3 +371,9 @@ test('representative-R15 original and changed scratch directories retain their r
     classed(outcome, { kind: 'scratch-illegible', path: realpathSync.native(request.scratch) }, 'R15');
   });
 });
+
+/** An unreadable record is a sign, with neither a command start nor an environment row. */
+function recordSign(outcome, request, why) {
+  assert.equal(outcome.status, 'rejected');
+  assert.ok(outcome.reason.signs?.some(({ kind, path, reason }) => kind === 'record' && path === join(request.directory, 'groups.json') && why.test(reason)), outcome.reason.message);
+}
