@@ -1481,3 +1481,28 @@ test('S4-S6: a later start works after an exited or reused unended pid, includin
     if (observation !== 'S4 exited') assertUntouched(pid, 'the real replacement after dispatch');
   });
 });
+
+// Host reason: OS behaviour; a macOS table read must show that a tracked pid of a dispatch whose census failed now holds a real process of another start, without signalling it.
+// Deterministic counterpart: test/sign-refusal.test.mjs :: C1 C2 C6 C9 Z1: a start goes ahead past a read sign whose tracked pids a whole-table read shows are not the processes recorded
+// proves R-STATE-32, R-STATE-38
+test('C1: a later start goes ahead past a dispatch read sign whose tracked pid now holds another process, leaving that process alive', SETTLES_WITHIN, async (t) => {
+  const { dispatch } = await import('../src/execution/run.mjs');
+  const directory = holding(t);
+  const group = await reapedPid();
+  const pid = await tailIn(t, directory, join(directory, 'foreign'));
+  writeGroups(stateOf(directory), [{ group, started: 0, dispatch: 'd-reused', card: 1507, settled: true,
+    tracked: [{ pid, started: startOf(pid) - 1 }], unread: [{ kind: 'dispatch', reason: 'the earlier dispatch census failed' }] }]);
+  const signals = [];
+  const host = { ...realHost, signal: (target, name) => { if (name !== 0) signals.push({ target, name }); return realHost.signal(target, name); } };
+
+  await assert.doesNotReject(killIn(directory, { host }), 'a start whose read sign names only a reused pid must go ahead');
+
+  assert.deepEqual(readGroups(stateOf(directory)), [], 'the record kept the entry for d-reused');
+  assert.deepEqual(signals.filter(({ target }) => target === pid || target === -pid), [], 'the start signalled the process at the tracked pid');
+  assertUntouched(pid, 'the process at the tracked pid after the start');
+  assert.ok(readEvents(stateOf(directory)).some(({ event, pid: named, dispatch: id }) => event === 'recorded.unended' && named === pid && id === 'd-reused'), 'no recorded.unended named the tracked pid');
+  const sink = openSink({ directory: stateOf(directory), run: 'r-after-reuse', now: Date.now });
+  const result = await dispatch({ id: 'd-after-reuse', card: 1507, directory: stateOf(directory), sink, command: '/usr/bin/true', args: [], cwd: directory, env: {}, timeout: 10_000, host });
+  assert.equal(result.exit, 0, 'the later dispatch did not run its command');
+  assertUntouched(pid, 'the process at the tracked pid after the later dispatch');
+});
