@@ -1558,3 +1558,26 @@ test('a sign ends a clock-kept run once its running command ends', { timeout: 20
     await running.catch(() => {});
   }
 });
+
+// Clearing one failed write must hold even while another failure in its directory still stands.
+test('normal exit does not restore a gone entry beside another failed write still standing', { timeout: 10_000 }, async (t) => {
+  const { writeGroups, failedWriteSigns, partialPath } = await import('../src/execution/groups.mjs');
+  const { mkdirSync, rmSync } = await import('node:fs');
+  const world = await exitSignWorld(t);
+  const later = trackerWorld(world.clock, world.group + 100, world.table);
+  const started = Date.UTC(2026, 9, 29, 12) / 1000;
+  const gone = { group: later.group + 100, started, dispatch: 'd-gone' };
+  const live = { group: later.group, started, dispatch: 'd-live' };
+  const partial = partialPath(world.directory);
+  mkdirSync(partial);
+  assert.throws(() => writeGroups(world.directory, [gone], { host: world.host }));
+  assert.throws(() => writeGroups(world.directory, [live], { host: world.host }));
+  rmSync(partial, { recursive: true });
+  assert.deepEqual(readGroups(world.directory), [], 'premise: neither failed write reached the record');
+  assert.equal(failedWriteSigns(world.directory, { host: world.host }).length, 1, 'premise: exactly the live entry must remain a write sign');
+  process.listeners('exit').find(({ name }) => name === 'cleanup')();
+  const entries = readGroups(world.directory);
+  assert.deepEqual(entries.map(({ dispatch }) => dispatch), ['d-live'], 'an entry whose processes were shown gone was written back at exit');
+  assert.ok(entries[0].unended.some(({ pid }) => pid === later.group), 'the other failed write lost its live process');
+  assert.deepEqual(world.signals, [], 'exit persistence signalled an unregistered group');
+});
