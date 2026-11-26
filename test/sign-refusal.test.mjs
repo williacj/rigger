@@ -8,6 +8,7 @@ import { killRecordedGroups } from '../src/execution/run.mjs';
 import { dispatch } from '../src/execution/run.mjs';
 import { readGroups } from '../src/execution/groups.mjs';
 import { trackerWorld, turn } from './process-fixtures.mjs';
+import { workingProcess } from './process-fixtures.mjs';
 import { manualClock } from './clock-report-world.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 
@@ -30,7 +31,7 @@ function signWorld(t) {
 }
 
 /** Independently expected fields must occur together in both structured and printable sign reports. */
-function assertNamedSigns(signs, output, expected) {
+function assertNamedSigns(signs, output, expected, everySign = false) {
   const messages = (value) => typeof value === 'string' ? [value] : value === undefined ? []
     : [value.message, ...(value.errors ?? []).flatMap(messages), ...messages(value.cause)];
   const prefix = "signs of an earlier dispatch's process: ";
@@ -52,12 +53,14 @@ function assertNamedSigns(signs, output, expected) {
       ? Number.isSafeInteger(sign[key]) && sign[key] > 1 : typeof sign[key] === 'string' && sign[key].length > 0,
     `the report lost ${sign.kind}.${key}`);
   }
+  const matches = (required, sign) => Object.entries(required).every(([key, value]) => value instanceof RegExp
+    ? typeof sign[key] === 'string' && value.test(sign[key]) : sign[key] === value);
+  if (everySign) for (const report of [...(signs === undefined ? [] : [signs]), ...printed]) for (const sign of report) {
+    assert.ok(expected.some((required) => matches(required, sign)), `the report included unexpected ${sign.kind} details: ${JSON.stringify(sign)}`);
+  }
   for (const required of expected) {
-    const entries = Object.entries(required);
-    const matches = (sign) => entries.every(([key, value]) => value instanceof RegExp
-      ? typeof sign[key] === 'string' && value.test(sign[key]) : sign[key] === value);
-    if (signs !== undefined) assert.ok(signs.some(matches), `structured report lost the required ${required.kind} details`);
-    assert.ok(printed.some((report) => report.some(matches)), `printable report lost the required ${required.kind} details`);
+    if (signs !== undefined) assert.ok(signs.some((sign) => matches(required, sign)), `structured report lost the required ${required.kind} details`);
+    assert.ok(printed.some((report) => report.some((sign) => matches(required, sign))), `printable report lost the required ${required.kind} details`);
   }
 }
 
@@ -72,6 +75,7 @@ test('S1: an unended dispatch process stays named and prevents the next dispatch
   const result = await running;
   assert.equal(result.exit, 3, 'the survivor does not change the command exit');
   const entry = readGroups(world.directory).find(({ dispatch }) => dispatch === 'd-first');
+  assert.equal(entry?.settled, true, 'whole containment did not mark the sign-bearing entry settled');
   assert.ok(entry?.unended?.some(({ pid, name, cmd }) => pid === world.escaped && name === 'controlled' && cmd === `controlled ${world.escaped}`), 'the settled dispatch lost its process sign');
   const spawn = t.mock.method(world.host, 'spawn');
   const [later] = await Promise.allSettled([world.start('d-later')]);
@@ -545,13 +549,7 @@ async function failedWriteUntilGone(t) {
     mkdirSync(place);
     const pid = kind === 'group' ? world.group + 1 : world.escaped;
     world.table.get(pid).outlives = true;
-    // lsof's documented -F pun contract, also consumed by trackerWorld's empty listing.
-    if (kind === 'directory') world.inject((tool, args) => {
-      if (tool !== world.host.lsof) return undefined;
-      const at = args.indexOf('-p');
-      const selected = at < 0 || args[at + 1].split(',').includes(String(pid));
-      return { status: selected ? 0 : 1, stdout: selected ? `p${pid}\nu${world.host.uid()}\nn${place}\n` : '', stderr: '' };
-    });
+    if (kind === 'directory') workingProcess(world, pid, place);
     writeGroups(world.directory, [{ group: world.group, started: Date.UTC(2026, 9, 29, 12) / 1000, dispatch: 'd-unread', settled: true,
       workspace: place, ...identityOf(place), unread: [{ kind, ...(kind === 'group' ? { group: world.group } : { directory: place }), reason: 'earlier census failed' }] }]);
     const [ran] = await Promise.allSettled([killRecordedGroups({ directory: world.directory, sink: world.sink, host: world.host })]);
@@ -565,13 +563,23 @@ async function failedWriteUntilGone(t) {
 // proves R-STATE-33
  test('S21 fields: an unreadable sign shape refuses the whole record before any signal', { timeout: 10_000 }, async (t) => {
   const { writeGroups } = await import('../src/execution/groups.mjs');
-  for (const fields of [{ unended: [{ pid: 0, started: 0 }] }, { unended: null }, { unread: {} }, { unread: [{ kind: 'other', reason: 'no such read' }] }, { settled: 'yes' }]) await t.test(JSON.stringify(fields), async (t) => {
+  const { recordPath } = await import('../src/execution/groups.mjs');
+  const { readFileSync } = await import('node:fs');
+  for (const fields of [{ unended: [{ pid: 0, started: 0 }] }, { unended: null }, { unread: {} }, { unread: [{ kind: 'other', reason: 'no such read' }] }, { settled: 'yes' },
+    { unended: [{ pid: 900_000_020, started: 'not a start time' }] },
+    { unended: [{ pid: 900_000_020, name: 7 }] }, { unended: [{ pid: 900_000_020, cmd: 7 }] },
+    { unread: [{ kind: 'dispatch', reason: 7 }] }, { unread: [{ kind: 'group', group: 1, reason: 'bad group' }] },
+    { unread: [{ kind: 'directory', directory: 'relative', reason: 'bad directory' }] },
+  ]) await t.test(JSON.stringify(fields), async (t) => {
     const world = signWorld(t);
-    writeGroups(world.directory, [{ group: world.group, started: Date.UTC(2026, 9, 29, 12) / 1000, dispatch: 'd-record', ...fields }]);
+    const started = Date.UTC(2026, 9, 29, 12) / 1000;
+    writeGroups(world.directory, [{ group: world.group, started, dispatch: 'd-prefix' }, { group: world.group + 100, started, dispatch: 'd-record', ...fields }]);
+    const before = readFileSync(recordPath(world.directory), 'utf8');
     const [ran] = await Promise.allSettled([killRecordedGroups({ directory: world.directory, sink: world.sink, host: world.host })]);
     assert.equal(ran.status, 'rejected', 'an unreadable sign entry was accepted');
     assert.ok(ran.reason.signs?.some(({ kind }) => kind === 'record'), ran.reason.message);
     assert.deepEqual(world.signals, [], 'a process was signalled before the whole record was readable');
+    assert.equal(readFileSync(recordPath(world.directory), 'utf8'), before, 'the unreadable record was rewritten');
   });
 });
 
@@ -585,12 +593,15 @@ async function startAfterProcessRead(t, observation) {
     unended: [{ pid: world.escaped, started: Date.UTC(2026, 9, 29, 12) / 1000, name: 'controlled', cmd: `controlled ${world.escaped}` }] }]);
   if (observation === 'absent') world.table.delete(world.escaped);
   if (observation === 'reused pid') world.table.get(world.escaped).started = 'Thu Oct 29 12:00:01 2026';
-  if (['failed read', 'unreadable start'].includes(observation)) world.inject((_tool, args) => args.includes('-A') && args.at(-1) === 'pid=,stat=,lstart='
+  const failed = ['failed read', 'unreadable start', 'stderr on success', 'unparseable row'].includes(observation);
+  if (failed) world.inject((_tool, args) => args.includes('-A') && args.at(-1) === 'pid=,stat=,lstart='
     ? observation === 'failed read' ? { error: Object.assign(new Error('table unavailable'), { code: 2 }), stdout: '', stderr: 'table unavailable' }
+      : observation === 'stderr on success' ? { status: 0, stdout: '', stderr: 'ps: process table incomplete' }
+      : observation === 'unparseable row' ? { status: 0, stdout: `${world.escaped} unreadable\n`, stderr: '' }
       : { status: 0, stdout: `${world.escaped} S no readable start\n`, stderr: '' } : undefined);
   const [ran] = await Promise.allSettled([killRecordedGroups({ directory: world.directory, sink: world.sink, host: world.host })]);
   assert.deepEqual(world.signals, [], 'an unconfirmed or exited process was signalled');
-  if (['failed read', 'unreadable start'].includes(observation)) {
+  if (failed) {
     assert.equal(ran.status, 'rejected');
     assert.ok(ran.reason.signs.some(({ pid }) => pid === world.escaped));
   } else {
@@ -606,7 +617,7 @@ async function startAfterProcessRead(t, observation) {
 
 // proves R-STATE-31
 test('S7: an unconfirmed unended process refuses work without receiving a signal', { timeout: 10_000 }, async (t) => {
-  for (const observation of ['failed read', 'unreadable start']) await t.test(observation, (t) => startAfterProcessRead(t, observation));
+  for (const observation of ['failed read', 'unreadable start', 'stderr on success', 'unparseable row']) await t.test(observation, (t) => startAfterProcessRead(t, observation));
 });
 
 // proves R-STATE-38
@@ -773,7 +784,7 @@ test('S14b: a gone read before take permits a later dispatch after a failed writ
   assert.ok(stderr.includes(join(world.directory, 'groups.json')), 'exit did not name the failed record write');
   assert.ok(stderr.includes('controlled record storage full'), 'exit lost why the write failed');
   assertNamedSigns(undefined, stderr,
-    [{ kind: 'write', path: join(world.directory, 'groups.json'), reason: 'controlled record storage full' }]);
+    [{ kind: 'write', path: join(world.directory, 'groups.json'), reason: 'controlled record storage full' }], true);
   assert.equal(fs.existsSync(partial), false, 'an unfinished write survived, so this is not S20');
   assert.equal(world.table.get(world.escaped).state, 'S', 'the process did not outlive exit cleanup');
   world.finish();
@@ -838,6 +849,9 @@ async function planAfter(world) {
   assert.equal(settled.mock.calls.some(({ arguments: [, outcome] }) => outcome.reason?.code === 'SIGN_STOPPED'), false, 'L3 handed the unstarted maker outcome to L2');
   assert.equal(world.events().filter(({ event, attempt }) => event === 'attempt.failed' && attempt === 1).length, 1, 'the first failure was not established');
   assert.equal(world.events().filter(({ event, attempt }) => event === 'attempt.failed' && attempt === 2).length, 0, 'the refusal spent attempt two');
+  const path = join(world.state, 'groups.json');
+  assertNamedSigns(world.events().find(({ event }) => event === 'sign.stopped').signs, world.failure(),
+    [{ kind: 'record', path, reason: /Expected property name or '}' in JSON at position 1/ }]);
   const planned = await planAfter(world);
   assert.equal(planned.code, 0, planned.text);
   assert.match(planned.text, /pull\s+#11\b/, 'plan did not read admission open for the next card');
@@ -1269,4 +1283,278 @@ test('S1 S2 S9 S14a S22 verb: an ending dispatch or failed write stops actual ru
       assertNamedSigns(stops[0].signs, result.text, expected);
     }
   });
+});
+
+// A successful snapshot does not authorize a destructive signal after reuse during SIGSTOP.
+test('a recorded pid replaced while stopped receives no destructive retry', { timeout: 10_000 }, async (t) => {
+  const { writeGroups } = await import('../src/execution/groups.mjs');
+  const world = signWorld(t);
+  const started = Date.UTC(2026, 9, 29, 12) / 1000;
+  writeGroups(world.directory, [{ group: world.group, started, dispatch: 'd-earlier', settled: true,
+    unended: [{ pid: world.escaped, started, name: 'controlled', cmd: `controlled ${world.escaped}` }] }]);
+  const signal = world.host.signal;
+  let replaced = false;
+  world.host.signal = (target, name) => {
+    const answer = signal(target, name);
+    if (target === world.escaped && name === 'SIGSTOP') {
+      assert.equal(world.table.get(target).state, 'T', 'premise: the original identity was not stopped');
+      world.table.get(target).started = 'Thu Oct 29 12:00:01 2026';
+      replaced = true;
+    }
+    return answer;
+  };
+  await killRecordedGroups({ directory: world.directory, sink: world.sink, host: world.host }).catch(() => {});
+  assert.equal(replaced, true, 'the pid was not replaced during the stop');
+  assert.equal(world.signals.some(({ target, name }) => target === world.escaped && name === 'SIGKILL'), false, 'SIGKILL sent to the replacement');
+  assert.equal(world.table.get(world.escaped).state, 'S', 'the replacement was left stopped');
+});
+
+
+// The outcome must carry the sign even when its own containment event was refused.
+test('a rejected dispatch hands its process signs to its caller alongside the event refusal', { timeout: 10_000 }, async (t) => {
+  const world = signWorld(t);
+  const emitter = world.sink.emitter;
+  t.mock.method(world.sink, 'emitter', (context) => ({ emit(event, fields) {
+    if (event === 'survivor.unended') throw new Error('controlled containment event refused');
+    return emitter(context).emit(event, fields);
+  } }));
+  world.table.get(world.escaped).refuses = true;
+  const running = world.start('d-refused');
+  await turn(t);
+  world.finish(3);
+  const [ran] = await Promise.allSettled([running]);
+  assert.equal(ran.status, 'rejected');
+  assert.equal(ran.reason.code, 'EVENT_REFUSED');
+  assert.ok(ran.reason.signs?.some(({ kind, pid }) => kind === 'unended' && pid === world.escaped), 'the rejected dispatch lost its standing process sign');
+  assert.ok(ran.reason.unrecorded.some(({ event }) => event === 'survivor.unended'), 'the sign replaced the original event refusal');
+});
+
+// A successful gone read clears an in-run sign without a restart or a destructive signal.
+test('the claim-time read clears a recorded process sign once that identity is gone', { timeout: 10_000 }, async (t) => {
+  const { writeGroups } = await import('../src/execution/groups.mjs');
+  const { signsStanding } = await import('../src/execution/run.mjs');
+  const world = signWorld(t);
+  const started = Date.UTC(2026, 9, 29, 12) / 1000;
+  writeGroups(world.directory, [{ group: world.group, started, dispatch: 'd-earlier', settled: true,
+    unended: [{ pid: world.escaped, started, name: 'controlled', cmd: `controlled ${world.escaped}` }] }]);
+  assert.ok(signsStanding(world.directory, { host: world.host }).some(({ pid }) => pid === world.escaped), 'the live premise was not established');
+  world.table.delete(world.escaped);
+  assert.deepEqual(signsStanding(world.directory, { host: world.host }), [], 'the gone process still stopped a claim');
+  assert.deepEqual(world.signals, [], 'the claim-time read sent a signal');
+});
+
+// Whole containment has finished; a later start owes only the outstanding signs.
+test('a settled entry leaves its sign-free tracked processes and directories alone', { timeout: 10_000 }, async (t) => {
+  const { writeGroups } = await import('../src/execution/groups.mjs');
+  const { identityOf } = await import('../src/substrate/process.mjs');
+  const world = signWorld(t);
+  const place = temporaryDirectory('rigger-settled-scope-', { context: t });
+  const started = Date.UTC(2026, 9, 29, 12) / 1000;
+  workingProcess(world, world.escaped, place);
+  writeGroups(world.directory, [{ group: world.group, started, dispatch: 'd-earlier', settled: true,
+    workspace: place, ...identityOf(place), tracked: [{ pid: world.group + 1, started }],
+    unended: [{ pid: world.escaped + 100, started, name: 'gone', cmd: 'gone' }] }]);
+  await killRecordedGroups({ directory: world.directory, sink: world.sink, host: world.host });
+  assert.deepEqual(world.signals, [], 'a settled entry swept a process outside its outstanding signs');
+  assert.equal(world.table.get(world.group + 1).state, 'S');
+  assert.equal(world.table.get(world.escaped).state, 'S');
+  assert.deepEqual(readGroups(world.directory), []);
+});
+
+// A successful census still owes its unread dispatch scope while one of its processes survives.
+test('an unread dispatch stays recorded while a group or tracked process outlives its retry', { timeout: 10_000 }, async (t) => {
+  const { writeGroups } = await import('../src/execution/groups.mjs');
+  for (const scope of ['group', 'tracked']) await t.test(scope, async (t) => {
+    const world = signWorld(t);
+    const started = Date.UTC(2026, 9, 29, 12) / 1000;
+    const pid = scope === 'group' ? world.group + 1 : world.escaped;
+    world.table.get(pid).outlives = true;
+    if (scope === 'group') world.table.delete(world.escaped);
+    else { world.table.delete(world.group); world.table.delete(world.group + 1); }
+    writeGroups(world.directory, [{ group: world.group, started, dispatch: 'd-unread', settled: true,
+      ...(scope === 'tracked' ? { tracked: [{ pid, started }] } : {}),
+      unread: [{ kind: 'dispatch', reason: 'the earlier dispatch census failed' }] }]);
+    const [ran] = await Promise.allSettled([killRecordedGroups({ directory: world.directory, sink: world.sink, host: world.host })]);
+    assert.equal(ran.status, 'rejected');
+    const held = readGroups(world.directory)[0];
+    assert.ok(held?.unended?.some((each) => each.pid === pid), 'the surviving process was not retained');
+    assert.ok(held.unread?.some(({ kind, reason }) => kind === 'dispatch' && reason === 'the earlier dispatch census failed'), 'the surviving process cleared its dispatch census sign');
+  });
+});
+
+// Even an empty readable partial must be consumed by the start's successful rewrite.
+test('a start consumes a readable empty unfinished write when the record is empty', { timeout: 10_000 }, async (t) => {
+  const { writeGroups, partialPath } = await import('../src/execution/groups.mjs');
+  const { writeFileSync, existsSync } = await import('node:fs');
+  const world = signWorld(t);
+  writeGroups(world.directory, []);
+  writeFileSync(partialPath(world.directory), '[]');
+  await killRecordedGroups({ directory: world.directory, sink: world.sink, host: world.host });
+  assert.equal(existsSync(partialPath(world.directory)), false, 'the empty unfinished write was left unconsumed');
+  assert.deepEqual(readGroups(world.directory), []);
+  assert.deepEqual(world.signals, []);
+});
+
+// Both durable versions may hold a different outstanding identity in the same dispatch entry.
+test('a readable unfinished write unions each recorded process and failed-read field', { timeout: 10_000 }, async (t) => {
+  const { writeGroups, partialPath } = await import('../src/execution/groups.mjs');
+  const { writeFileSync } = await import('node:fs');
+  for (const field of ['tracked', 'unended', 'unread']) await t.test(field, async (t) => {
+    const world = signWorld(t);
+    const started = Date.UTC(2026, 9, 29, 12) / 1000;
+    const second = world.escaped + 1;
+    world.table.set(second, { ...world.table.get(world.escaped), pid: second, parent: 1, group: second, cmd: `controlled ${second}`, refuses: true });
+    world.table.get(world.escaped).refuses = true;
+    const entry = { group: world.group, started, dispatch: 'd-earlier', settled: field !== 'tracked' };
+    const identity = (pid) => ({ pid, started, name: 'controlled', cmd: `controlled ${pid}` });
+    const older = field === 'unread' ? [{ kind: 'group', group: world.group, reason: 'older group census failed' }] : [identity(world.escaped)];
+    const added = field === 'unread' ? [{ kind: 'dispatch', reason: 'partial dispatch census failed' }] : [identity(second)];
+    writeGroups(world.directory, [{ ...entry, [field]: older }]);
+    writeFileSync(partialPath(world.directory), JSON.stringify([{ ...entry, [field]: added }]));
+    if (field === 'unread') world.inject((_tool, args) => args.includes('-g') ? { error: Object.assign(new Error('controlled census refused'), { code: 2 }), stdout: '', stderr: 'controlled census refused' } : undefined);
+    const [ran] = await Promise.allSettled([killRecordedGroups({ directory: world.directory, sink: world.sink, host: world.host })]);
+    assert.equal(ran.status, 'rejected');
+    const held = readGroups(world.directory)[0];
+    if (field === 'unread') for (const wanted of older.concat(added)) assert.ok(held.unread?.some(({ kind, reason }) => kind === wanted.kind && reason === wanted.reason), `the partial lost ${wanted.kind}'s failed read`);
+    else for (const pid of [world.escaped, second]) assert.ok(held.unended?.some((each) => each.pid === pid), `the partial lost process ${pid} from ${field}`);
+  });
+});
+
+// The partial records whole containment settled after the durable entry was written.
+test('an unfinished write keeps its later settlement instead of sweeping a finished directory again', { timeout: 10_000 }, async (t) => {
+  const { writeGroups, partialPath } = await import('../src/execution/groups.mjs');
+  const { identityOf } = await import('../src/substrate/process.mjs');
+  const { writeFileSync } = await import('node:fs');
+  const world = signWorld(t);
+  const place = temporaryDirectory('rigger-partial-settled-', { context: t });
+  const started = Date.UTC(2026, 9, 29, 12) / 1000;
+  world.table.get(world.group).started = 'Thu Oct 29 12:00:01 2026';
+  workingProcess(world, world.escaped, place);
+  const entry = { group: world.group, started, dispatch: 'd-earlier', workspace: place, ...identityOf(place) };
+  writeGroups(world.directory, [{ ...entry, settled: false }]);
+  writeFileSync(partialPath(world.directory), JSON.stringify([{ ...entry, settled: true,
+    unended: [{ pid: world.escaped + 100, started, name: 'gone', cmd: 'gone' }] }]));
+  await killRecordedGroups({ directory: world.directory, sink: world.sink, host: world.host });
+  assert.deepEqual(world.signals, [], 'the older entry replaced the partial settlement and swept a later occupant');
+  assert.equal(world.table.get(world.escaped).state, 'S');
+  assert.deepEqual(readGroups(world.directory), []);
+});
+
+/** Installs L0's normal-exit handler and lets its completed dispatch go before the exit-only premise. */
+async function exitSignWorld(t) {
+  const world = signWorld(t);
+  const running = world.start('d-prime-exit');
+  await turn(t);
+  world.finish();
+  await running;
+  await turn(t);
+  world.signals.length = 0;
+  return world;
+}
+
+// A failed initial entry write must preserve its leader even when no durable dispatch entry exists.
+test('normal exit saves the omitted group leader under an entry absent from the record', { timeout: 10_000 }, async (t) => {
+  const { writeGroups } = await import('../src/execution/groups.mjs');
+  const { mkdirSync, rmSync } = await import('node:fs');
+  const { join } = await import('node:path');
+  const world = await exitSignWorld(t);
+  const later = trackerWorld(world.clock, world.group + 100, world.table);
+  const started = Date.UTC(2026, 9, 29, 12) / 1000;
+  const partial = join(world.directory, 'groups.json.partial');
+  mkdirSync(partial);
+  assert.throws(() => writeGroups(world.directory, [{ group: later.group, started, dispatch: 'd-omitted' }], { host: world.host }));
+  rmSync(partial, { recursive: true });
+  assert.deepEqual(readGroups(world.directory), [], 'the failed write unexpectedly reached the record');
+  process.listeners('exit').find(({ name }) => name === 'cleanup')();
+  const entry = readGroups(world.directory).find(({ dispatch }) => dispatch === 'd-omitted');
+  assert.ok(entry?.unended?.some(({ pid, started: actual, name, cmd }) => pid === later.group && actual === started && name === 'controlled' && cmd === `controlled ${later.group}`), 'exit lost the omitted leader or its absent dispatch entry');
+  assert.equal(entry.settled, undefined, 'the exit-only write invented completed containment');
+  assert.deepEqual(world.signals, [], 'exit sign persistence signalled an unregistered group');
+});
+
+// Showing the last omitted process gone clears its write rather than inventing a new exit failure.
+test('normal exit prints no failed-write sign once its omitted process is shown gone', { timeout: 10_000 }, async (t) => {
+  const { writeGroups } = await import('../src/execution/groups.mjs');
+  const fs = (await import('node:fs')).default;
+  const { syncBuiltinESMExports } = await import('node:module');
+  const { join } = await import('node:path');
+  const world = await exitSignWorld(t);
+  const later = trackerWorld(world.clock, world.group + 100, world.table);
+  const started = Date.UTC(2026, 9, 29, 12) / 1000;
+  const partial = join(world.directory, 'groups.json.partial');
+  fs.mkdirSync(partial);
+  assert.throws(() => writeGroups(world.directory, [{ group: later.group, started, dispatch: 'd-gone' }], { host: world.host }));
+  fs.rmSync(partial, { recursive: true });
+  world.table.delete(later.group);
+  let stderr = '';
+  const write = fs.writeSync;
+  t.mock.method(fs, 'writeSync', (fd, buffer, ...args) => {
+    if (fd !== 2) return write(fd, buffer, ...args);
+    stderr += buffer.toString();
+    return buffer.length;
+  });
+  syncBuiltinESMExports();
+  t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
+  process.listeners('exit').find(({ name }) => name === 'cleanup')();
+  assert.equal(stderr.includes(world.directory), false, 'exit printed a write sign after its omitted process was shown gone');
+  assert.deepEqual(readGroups(world.directory), []);
+  assert.equal(fs.existsSync(partial), false);
+  t.mock.restoreAll();
+  syncBuiltinESMExports();
+});
+
+// A required step's refused second dispatch is not an environment failure on attempt two.
+test('a sign between a second provisioning start and spawn spends no failed attempt', { timeout: 20_000 }, async (t) => {
+  const { signLoopWorld } = await import('./process-fixtures.mjs');
+  const { minimalConfig } = await import('./optional-config.mjs');
+  const { writeFileSync } = await import('node:fs');
+  const { join } = await import('node:path');
+  const settings = minimalConfig();
+  settings.provisioning = { install: { run: 'controlled install', required: true, timeout: 60_000 } };
+  settings.kinds.change.provisioning = ['install'];
+  let world;
+  let signed = false;
+  world = await signLoopWorld(t, { settings, numbers: [10], accepted: ({ event, dispatch }) => {
+    if (event !== 'dispatch.start') return;
+    const owner = world.events().find((entry) => entry.event === 'dispatch' && entry.dispatch === dispatch);
+    if (owner?.attempt !== 2) return;
+    signed = true;
+    writeFileSync(join(world.state, 'groups.json'), '{');
+  } });
+  let spawns = 0;
+  world.host.spawn = () => { spawns += 1; throw Object.assign(new Error('controlled command missing'), { code: 'ENOENT' }); };
+  await world.start().catch(() => {});
+  assert.equal(signed, true, 'the second provisioning attempt did not reach its start');
+  assert.equal(spawns, 1, 'the refused step spawned its command');
+  assert.equal(world.events().filter(({ event, attempt }) => event === 'attempt.failed' && attempt === 1).length, 1);
+  assert.equal(world.events().some(({ event, attempt }) => event === 'attempt.failed' && attempt === 2), false, 'the unstarted provisioning step spent attempt two');
+  assert.equal(world.decisions.some(({ outcomes = [] }) => outcomes.some(({ reason }) => reason?.code === 'SIGN_STOPPED')), false, 'L3 handed the refused step to workflow');
+});
+
+// A declared clock must not hold the run up after the last running dispatch ends beside a sign.
+test('a sign ends a clock-kept run once its running command ends', { timeout: 20_000 }, async (t) => {
+  const { signLoopWorld, until } = await import('./process-fixtures.mjs');
+  const { minimalConfig } = await import('./optional-config.mjs');
+  const settings = minimalConfig();
+  settings.clock = { poll: 1000, triggers: { report: { interval: 1000, anchor: '1970-01-01T00:00:00.000Z', catchUp: 'skip', job: 'report' } } };
+  const world = await signLoopWorld(t, { settings, numbers: [10] });
+  const controller = new AbortController();
+  let ended = false;
+  const running = world.engine.run({ stop: controller.signal });
+  running.then(() => { ended = true; }, () => { ended = true; });
+  try {
+    await until(() => world.models.length === 1 || ended, t);
+    assert.equal(world.models.length, 1, 'the clock-kept premise command did not start');
+    await turn(t);
+    world.table.get(world.models[0].escaped).refuses = true;
+    world.models[0].finish(3);
+    await until(() => world.events().some(({ event }) => event === 'sign.stopped') || ended, t);
+    await turn(t);
+    assert.equal(ended, true, 'the clock kept the run alive after the sign stop');
+    assert.equal(controller.signal.aborted, false, 'an external stop supplied the ending');
+  } finally {
+    controller.abort();
+    for (const model of world.models) model.finish(3);
+    await running.catch(() => {});
+  }
 });
