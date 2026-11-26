@@ -839,6 +839,20 @@ export function trackerWorld(clock, group = 900_000_010, table = new Map()) {
     inject: (next) => { fault = next; }, emitter: { emit: (event, fields) => events.push({ event, ...fields }) } };
 }
 
+/**
+ * A controlled cwd occupant, using lsof(8)'s -F pun fields (pid, uid and cwd name), as the
+ * directory-census fixtures request them. An exited process owns no cwd to list.
+ */
+export function workingProcess(world, pid, directory) {
+  world.inject((tool, args) => {
+    if (tool !== world.host.lsof) return undefined;
+    const row = world.table.get(pid);
+    const at = args.indexOf('-p');
+    const selected = row !== undefined && !row.state.startsWith('Z') && (at < 0 || args[at + 1].split(',').includes(String(pid)));
+    return { status: selected ? 0 : 1, stdout: selected ? `p${pid}\nu${world.host.uid()}\nn${directory}\n` : '', stderr: '' };
+  });
+}
+
 /** A real L2/L3 loop over the shared forge and process-table doubles, with no executable agent. */
 export async function signLoopWorld(t, { numbers = [10, 11], concurrency = 1, settings, observe = () => {}, accepted = () => {}, beforeWorkspace } = {}) {
   const { minimalConfig } = await import('./optional-config.mjs');
