@@ -53,7 +53,7 @@ export const HOST_REPORTS = [
   ['R20', 'adapter-variable', { variable: 'TMPDIR' }], ['R21', 'dispatch-location'], ['R22', 'dispatch-identity'], ['R23', 'dispatch-timeout'],
   ['R24', 'event-emitter-missing'], ['R25', 'groups-unwritable'], ['R26', 'codex-directory-unmade'], ['R27', 'codex-home-file-unwritten'],
   ['R28', 'process-resources'], ['R29', 'directory-unusable'], ['R30', 'working-directory-outside'], ['R31', 'directory-occupied'],
-  ['R32', 'groups-unreadable'], ['R33', 'claude-rule-unreadable'], ['R34', 'owner-home-missing'], ['R35', 'agent-name-invalid'],
+  ['R33', 'claude-rule-unreadable'], ['R34', 'owner-home-missing'], ['R35', 'agent-name-invalid'],
   ['R36', 'file-descriptors'], ['R37', 'host-error'],
 ];
 

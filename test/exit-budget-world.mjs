@@ -233,12 +233,30 @@ function assertBare({ events, record, signals, reads, left }, label) {
   assert.equal(left.filter(({ pid }) => pid === group + 2 || pid === group + 3).length, 2, `${d}'s directories were swept`);
 }
 
-/** Dispatch `label` had its census and sweep: no group kill recorded for the budget, and its entry gone. */
-function assertCareful({ events, record }, label) {
+/** Dispatch `label` had its census and sweep; only a sign keeps its entry. */
+function assertCareful({ events, record }, label, sign) {
   const d = `d-${label}`;
   assert.deepEqual(events.filter(({ dispatch: id, census }) => id === d && /15000 ms/.test(census ?? '')), [], `${d} had the bare kill`);
   assert.equal(endsOf(events, d)[0].kept, undefined);
+  if (sign !== undefined) return assertSignKept({ events, record }, label, sign);
   assert.deepEqual(record.filter(({ dispatch: id }) => id === d), [], `${d}'s entry was kept`);
+}
+
+/** Retains every observed unended pid or the group recorded for its failed census. */
+function assertSignKept({ events, record }, label, sign) {
+  const dispatch = `d-${label}`;
+  const entry = record.find((entry) => entry.dispatch === dispatch);
+  assert.ok(entry, `${dispatch}'s sign entry was removed`);
+  if (sign === 'unended') {
+    const pids = events.filter((event) => event.dispatch === dispatch && event.event === 'survivor.unended').map(({ pid }) => pid);
+    assert.ok(pids.length > 0, 'the case leaves no unended process');
+    for (const pid of pids) assert.ok(entry.unended?.some((each) => each.pid === pid), `${dispatch} lost process ${pid}`);
+  } else {
+    const group = groupOf(label);
+    const reads = events.filter((event) => event.dispatch === dispatch && event.event === 'group.killed' && event.group === group);
+    assert.ok(reads.length > 0, 'the case records no failed group read');
+    assert.ok(entry.unread?.some((each) => each.kind === 'group' && each.group === group && reads.some(({ census }) => census === each.reason)), `${dispatch} lost its failed group read`);
+  }
 }
 
 const NINE = [1, 2, 3, 4, 5, 6, 7, 8, 9];
@@ -268,7 +286,7 @@ export const BUDGET = {
     const ran = run({ groups: [{ label: 1, speed: 500, survivors: true, outlives: ['member', 'survivors'] }, { label: 2, survivors: true }, { label: 3, survivors: true }] });
     assert.ok(ran.elapsed >= EXIT_CARE_BOUND, `the stuck group took ${ran.elapsed} ms, so it spent no budget`);
     assertAllEnded(ran, [1, 2, 3]);
-    assertCareful(ran, 1);
+    assertCareful(ran, 1, 'unended');
     const unended = ran.events.filter(({ dispatch: id, event }) => id === 'd-1' && event === 'survivor.unended').map(({ pid }) => pid).sort();
     assert.deepEqual(unended, [1_001, 1_002, 1_003], 'the stuck group did not finish its census and both sweeps');
     assertBare(ran, 2);
@@ -281,7 +299,7 @@ export const BUDGET = {
     assert.ok(ran.elapsed < EXIT_CARE_BOUND && ran.elapsed >= READ_TIMEOUT, `the hung table cost ${ran.elapsed} ms`);
     assertAllEnded(ran, labels);
     for (const label of labels) {
-      assertCareful(ran, label);
+      assertCareful(ran, label, 'unread');
       assert.deepEqual(ran.signals.filter(({ target, name }) => target === -groupOf(label) && name === 'SIGKILL').length > 0, true, `d-${label} was not killed`);
       const recorded = ran.events.filter(({ dispatch: id, event, group }) => id === `d-${label}` && event === 'group.killed' && group === groupOf(label));
       assert.equal(recorded.length, 1, `d-${label}'s group is not recorded in place of what it could not read`);
@@ -292,7 +310,7 @@ export const BUDGET = {
     assert.equal(ran.reads.filter(({ hung }) => hung).length, 1, JSON.stringify(ran.reads));
     assertAllEnded(ran, [1, 2, 3]);
     assertCareful(ran, 1);
-    assertCareful(ran, 2);
+    assertCareful(ran, 2, 'unread');
     assertBare(ran, 3);
   },
   exactBound(run) {
@@ -326,7 +344,7 @@ export const BUDGET = {
           diagnostic(shown);
           assert.ok(ran.elapsed <= EXIT_BOUND - EXIT_CARE_BOUND, shown);
           assertAllEnded(ran, [1]);
-          assertCareful(ran, 1);
+          assertCareful(ran, 1, 'unended');
           assert.ok(ran.events.some(({ event, pid }) => event === 'survivor.unended' && pid === 1_001), `the member the kill does not end is not recorded as not ended: ${shown}`);
           if (speed === 'half' && outlives.includes('tracked')) {
             const firstGroupRead = ran.reads.find(({ args }) => args?.includes('-g'));
