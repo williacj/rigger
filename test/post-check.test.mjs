@@ -205,3 +205,34 @@ test('the real gh is handed each file a flag named as the copy that was checked,
     assert.deepEqual(argumentsFor(argv, decision, new Map(files.map((part, index) => [part, `/c/${index}`]))), expected, argv.join(' '));
   }
 });
+
+// Each flag of gh 2.105.0 whose `gh <command> --help` text says it reads a file or standard input,
+// with an argument it accepts. Read off the help text, independently of the check's table.
+const READS_FILES = [
+  ['agent-task', 'create', '--from-file', 'f'], ['agent-task', 'create', '--from-file', '-'],
+  ['api', 'x', '--field', 'k=@f'], ['api', 'x', '-F', 'k=@-'], ['api', 'x', '--input', 'f'], ['api', 'x', '--input', '-'],
+  ['attestation', 'trusted-root', '--tuf-root', 'f'], ['attestation', 'verify', 'f', '--bundle', 'b'],
+  ['attestation', 'verify', 'f', '--custom-trusted-root', 'r'], ['auth', 'login', '--with-token'],
+  ['discussion', 'comment', '1', '--body-file', 'f'], ['discussion', 'create', '--title', 't', '--body-file', '-'],
+  ['discussion', 'edit', '1', '--body-file', 'f'],
+  ...['comment', 'create', 'edit'].flatMap((verb) => [
+    ['issue', verb, '1', '--title', 't', '--body-file', 'f'], ['issue', verb, '1', '--title', 't', '--body', 'b', '--attach', 'f'],
+    ['pr', verb, '1', '--title', 't', '--body-file', '-'], ['pr', verb, '1', '--title', 't', '--body', 'b', '--attach', 'f'],
+  ]),
+  ['issue', 'create', '--recover', 'f'], ['pr', 'create', '--recover', 'f'], ['pr', 'create', '--template', 'f'],
+  ['pr', 'merge', '1', '--squash', '--body-file', 'f'], ['pr', 'revert', '1', '--body-file', 'f'],
+  ['pr', 'review', '1', '--comment', '--body-file', 'f'],
+  ['release', 'create', 'v1', '--notes-file', 'f'], ['release', 'edit', 'v1', '--notes-file', '-'],
+  ['secret', 'set', 'N', '--env-file', 'f'], ['secret', 'set', 'N', '-f', 'f'], ['secret', 'set', 'N'],
+  ['variable', 'set', 'N', '--env-file', 'f'], ['variable', 'set', 'N'],
+  ['workflow', 'run', 'w', '--json'], ['gist', 'create', '--filename', 'n'], ['repo', 'create', 'r', '--source', '.'],
+];
+
+test('for each flag of gh 2.105.0 that reads a file or standard input, its bytes are checked or the command is refused', () => {
+  for (const argv of READS_FILES) {
+    const decision = decide(argv);
+    const reads = decision.parts.some(({ kind }) => kind === 'file' || kind === 'stdin');
+    assert.ok(reads || decision.row === 'G6' || decision.row === 'G7', `${argv.join(' ')}: ${decision.row}`);
+    if (reads) assert.ok(['G3', 'G4', 'G5'].includes(decision.row), `${argv.join(' ')}: ${decision.row}`);
+  }
+});

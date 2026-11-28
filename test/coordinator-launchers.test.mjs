@@ -533,3 +533,39 @@ test('a node child and a nested shell started from a T1 or a T2 shell hold no va
     assert.equal(lines[5], 'file', result.stdout);
   }
 });
+
+test('a body file is sent as the bytes the check read, even where the file changes after the read, and a file written by the posting command is checked', () => {
+  const p = postWorld('post-file-');
+  const body = join(p.base, 'body.md');
+  // The file reads once as passing text and then as a list entry: a gh that re-read it would post the entry.
+  const once = `gh issue comment 1 --body-file <(printf '${PASSING}'; printf '${BLOCKED}' > '${body}') `;
+  asT1(p, 'bash', `printf '%s' '${PASSING}' > '${body}' && gh issue comment 12 --body-file '${body}'`);
+  asT1(p, 'bash', `printf '%s' '${BLOCKED}' > '${body}' && gh issue comment 12 --body-file '${body}'`);
+  asT1(p, 'zsh', once);
+  const calls = p.posted();
+  assert.equal(calls.length, 2, JSON.stringify(calls));
+  assert.deepEqual(calls[0].args.slice(0, 4), ['issue', 'comment', '12', '--body-file']);
+  assert.deepEqual(Object.values(calls[0].files), [PASSING]);
+  assert.notEqual(calls[1].args[4], body);
+  assert.deepEqual(Object.values(calls[1].files), [PASSING]);
+});
+
+test('the escalation command a role is given is sent with its passing content unchanged', () => {
+  const p = postWorld('post-escalation-');
+  writeFileSync(join(p.base, '.rigger-escalation.md'), `${PASSING}\n`);
+  const result = spawnSync('bash', ['-c', `cd '${p.base}' && ${readFileSync(SESSION_SHELL, 'utf8')}\ngh issue comment 12 --body-file .rigger-escalation.md`], {
+    env: { ...p.env, CLAUDE_ENV_FILE: SESSION_SHELL }, encoding: 'utf8',
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const [call] = p.posted();
+  assert.deepEqual(call.args.slice(0, 4), ['issue', 'comment', '12', '--body-file']);
+  assert.deepEqual(Object.values(call.files), [`${PASSING}\n`]);
+});
+
+test('where the check fails, no gh starts', () => {
+  const p = postWorld('post-fails-');
+  const result = asT1(p, 'bash', `gh issue comment 1 --body-file '${join(p.base, 'no-such-file.md')}'`);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /refused: the post could not be checked/);
+  assert.deepEqual(p.posted(), []);
+});

@@ -185,15 +185,20 @@ export function tree(dir) {
 }
 
 /**
- * A `gh` stand-in for the post check: each call appends its arguments and standard input, as one
- * JSON line, to `$POSTED`, and exits 0. Its source is the check's own contract, that the real `gh`
+ * A `gh` stand-in for the post check: each call appends its arguments, its standard input and the
+ * text of each file an argument names, as one JSON line, to `$POSTED`, and exits 0. Its source is the check's own contract, that the real `gh`
  * is started with the arguments and bytes it checked.
  */
 const POSTED_GH = (node) => `#!${node}
 const fs = require('node:fs');
 let stdin = '';
 try { stdin = fs.readFileSync(0, 'utf8'); } catch {}
-fs.appendFileSync(process.env.POSTED, JSON.stringify({ args: process.argv.slice(2), stdin }) + '\\n');
+const files = {};
+for (const arg of process.argv.slice(2)) {
+  const path = arg.includes('=@') ? arg.slice(arg.indexOf('=@') + 2) : arg;
+  try { if (fs.statSync(path).isFile()) files[arg] = fs.readFileSync(path, 'utf8'); } catch {}
+}
+fs.appendFileSync(process.env.POSTED, JSON.stringify({ args: process.argv.slice(2), stdin, files }) + '\\n');
 `;
 
 /**
