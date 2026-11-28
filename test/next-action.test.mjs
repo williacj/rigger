@@ -492,7 +492,7 @@ function withClosedLine(stage, { branch = false, closed = [{ number: 733, head: 
 }
 
 // Removal identity follows the closed PR numbers and heads and the following maker, not page order.
-// proves R-WORK-41
+// proves R-WORK-56
 test('L2 identifies closed-card maker removal by stable closed numbers heads and its following action', () => {
   const closed = [{ number: 9, head: 'b'.repeat(40), base: 'main' }, { number: 3, head: 'a'.repeat(40), base: 'release' }];
   const answer = (closed, labels = ['type:change']) => nextAction({ ...withClosedLine('review', { closed }), labels }, KINDS);

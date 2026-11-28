@@ -189,7 +189,7 @@ function world(t, { cards = [12], clock = manualClock(), afterMaker = () => {}, 
 const makerReady = (here) => positive(() => here.makerStarts().length > 0 && [...here.processes.children.values()].some((child) => child.cwd.includes('workspaces') && child.exitCode === null && child.signalCode === null));
 
 // F4: a continuing maker already has its release exclusion and must not enter fresh-work classification.
-// proves R-WORK-43, R-LOOP-19
+// proves R-WORK-58, R-LOOP-19
 test('F4 continuing: failed fresh and continuing makers take distinct forge-read paths', async (t) => {
   for (const kind of ['fresh', 'continuing']) {
     await t.test(kind, async (t) => {
@@ -229,7 +229,7 @@ test('F4 continuing: failed fresh and continuing makers take distinct forge-read
 });
 
 // F4: rejected continuing outcomes retain the merge-base no-work-read boundary.
-// proves R-WORK-43
+// proves R-WORK-58
 test('F4 continuing outcomes: refused nonzero results and never-started makers read no forge work', async (t) => {
   // L1's completed refusals carry result; NOT_STARTED carries no completed command result.
   for (const code of ['EVENT_REFUSED', 'RECORD_REFUSED', 'NOT_STARTED']) {
@@ -404,7 +404,7 @@ test('F3: a second run on the same board forgets the failed-maker exclusion', as
 });
 
 // F4 is an invariant guard: pushed work keeps the release pull's ordinary forge decisions.
-// proves R-WORK-19
+// proves R-WORK-55
 test('F4: a failed maker with a branch or pull request keeps the merge-base release action', async (t) => {
   for (const cell of ['branch', 'open', 'open-no-branch', 'merged', 'merged-no-branch', 'closed', 'closed-no-branch']) {
     await t.test(cell, async (t) => {
@@ -635,7 +635,7 @@ test('E4: a branch or open or merged pull preserves the ordinary release after t
 });
 
 // E7: a later board read outside Coding must end even an unreadable exit's skip.
-// proves R-SCHED-43
+// proves R-SCHED-63
 test('E7: a board move ends an unreadable exit skip and permits the next maker', async (t) => {
   const here = world(t, { readFailure: 'readBranches' });
   const run = here.start();
@@ -654,7 +654,7 @@ test('E7: a board move ends an unreadable exit skip and permits the next maker',
 });
 
 // E8: recovery alone must not end the skip or trigger any new reads of the card's work.
-// proves R-SCHED-43
+// proves R-SCHED-63
 test('E8: recovered forge reads in the same column leave the unreadable card skipped', async (t) => {
   const here = world(t, { readFailure: 'readBranches' });
   const run = here.start();

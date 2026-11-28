@@ -145,13 +145,13 @@ async function escalatedAtPull(card, forge, names) {
   assert.ok(after.issues[0].labels.includes('rigger:escalated'));
 }
 
-// proves R-WORK-19
+// proves R-WORK-55
 test('given a Ready card whose line of work the forge holds, L2 escalates it at the pull without a workspace and preserves its line of work', () => escalatedAtPull(cardIn(1, COLUMNS.ready), { branches: ['rigger-1'] }, /rigger-1/));
 
-// proves R-WORK-19
+// proves R-WORK-55
 test('given a Coding card whose line of work the forge holds, L2 escalates it at the pull without a workspace and preserves its line of work', () => escalatedAtPull(cardIn(2, COLUMNS.coding), { branches: ['rigger-2'] }, /rigger-2/));
 
-// proves R-WORK-19
+// proves R-WORK-55
 test('given a Ready or Coding card with a merged pull request from its line of work, L2 escalates it at the pull without a workspace and preserves its line of work', async () => {
   for (const column of [COLUMNS.ready, COLUMNS.coding]) await escalatedAtPull(cardIn(3, column), { pullRequests: [pullFrom(3, 31, true)] }, /#31\b/);
 });
@@ -189,10 +189,10 @@ test('given an Owner card with a merged pull request, L3 has L2 move it to Done 
   assert.deepEqual(built.repository.held(), before);
 });
 
-// proves R-WORK-19
+// proves R-WORK-55
 test('given a Review card with two open pull requests from its line of work, L2 escalates it at the pull without a workspace and preserves its line of work', () => escalatedAtPull(cardIn(4, COLUMNS.review), { pullRequests: [pullFrom(4, 41), pullFrom(4, 42)] }, /#41\b.*#42\b/));
 
-// proves R-WORK-19
+// proves R-WORK-55
 test('given a Review card with no pull request and its line of work on the forge, L2 escalates it at the pull without a workspace and preserves its line of work', () => escalatedAtPull(cardIn(5, COLUMNS.review), { branches: ['rigger-5'] }, /rigger-5/));
 
 // proves R-WORK-5
@@ -436,14 +436,14 @@ async function refusedOnTheBoard(card, forge, names, kinds = KINDS) {
   }
 }
 
-// proves R-WORK-19
+// proves R-WORK-55
 test('given an Owner card the forge holds no pull request for, more than one open for, or only its line of work for, L2 escalates it naming what the forge holds and preserves its line of work without a workspace, a row each', async () => {
   await refusedOnTheBoard(cardIn(51, COLUMNS.owner), {}, /no pull request.*rigger-51/);
   await refusedOnTheBoard(cardIn(52, COLUMNS.owner), { pullRequests: [pullFrom(52, 521), pullFrom(52, 522)] }, /#521\b.*#522\b/);
   await refusedOnTheBoard(cardIn(53, COLUMNS.owner), { branches: ['rigger-53'] }, /\brigger-53\b/);
 });
 
-// proves R-WORK-19
+// proves R-WORK-55
 test('given a Coding card with one open pull request and no marker, its reviewer sound with the pull request mergeable, coverage ruled insufficient, or a critical marker, L2 refuses it as at the base, and nothing moves, is claimed, is given a workspace or changes on the forge, a row each', async () => {
   const sha = pullFrom(54, 541).sha;
   const rows = {
@@ -533,7 +533,7 @@ test('through L2\'s facts call, a Coding card\'s markers are read at the card\'s
 });
 
 
-// proves R-WORK-41
+// proves R-WORK-56
 test('closed history in Done null or Backlog causes neither workflow reads nor cleanup while an otherwise identical Owner card cleans', async () => {
   for (const column of [COLUMNS.done, null, 'Backlog', COLUMNS.owner]) {
     let removals = 0;
@@ -558,7 +558,7 @@ test('closed history in Done null or Backlog causes neither workflow reads nor c
   }
 });
 
-// proves R-WORK-41
+// proves R-WORK-56
 test('a failed branch or later closed-history pull read rejects the whole facts snapshot before any cleanup or claim', async () => {
   for (const operation of ['readBranches', 'readPullRequests']) for (const message of ['gh: HTTP 502', 'gh: request timed out']) {
     let removals = 0;

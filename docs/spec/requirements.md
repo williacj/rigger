@@ -171,7 +171,7 @@ opens. In this table, that name is the trigger's author setting.
 | R-SCHED-53 | Rigger refuses a configuration that declares as a hand label a label Rigger fixes, or the epic label, in any letter case. The refusal names the hand label and the label it equals. | the config validator | the test suite | |
 | R-SCHED-54 | Rigger refuses a configuration in which a kind of work selects by a hand label, in any letter case, and the refusal names the kind and the label. | the config validator | the test suite | |
 | R-SCHED-28 | While a clock trigger is declared, `rigger run` does not end when the board drains. | the engine | the test suite | |
-| R-SCHED-29 | While a declared clock trigger keeps `rigger run` up and that run holds no claim, Rigger pulls a card in Ready no later than the bound after the card's start. A card's start is the later of when it enters Ready and when `R-SCHED-43` last ended a skip of it. The bound is the poll interval the consumer declares, plus one pull's reads of the board. A poll whose reads fail claims nothing, and the bound then runs from the next poll whose reads succeed. The cards it binds are in `### R-SCHED-29 — The Ready cards a clock-held run pulls`. | the engine | the test suite | |
+| R-SCHED-29 | While a declared clock trigger keeps `rigger run` up and that run holds no claim, Rigger pulls a card in Ready no later than the bound after the card's start. A card's start is the later of when it enters Ready and when `R-SCHED-63` last ended a skip of it. The bound is the poll interval the consumer declares, plus one pull's reads of the board. A poll whose reads fail claims nothing, and the bound then runs from the next poll whose reads succeed. The cards it binds are in `### R-SCHED-29 — The Ready cards a clock-held run pulls`. | the engine | the test suite | |
 | R-SCHED-30 | Rigger refuses a configuration that declares a clock trigger and no poll interval, and the refusal names the missing interval. No default interval applies. | the config validator | the test suite | |
 | R-SCHED-31 | When a clock trigger whose work is a card comes due, Rigger creates its card, even while the card from the trigger's previous firing is still open. | the engine | the test suite | |
 | R-SCHED-32 | Rigger creates at most one card for each occurrence of a clock trigger, across a restart that falls between the occurrence's firing and its card. A person's edit to that card before the restart is outside this row. | the engine | the test suite | |
@@ -185,7 +185,6 @@ opens. In this table, that name is the trigger's author setting.
 | R-SCHED-40 | Rigger refuses a configuration in which a clock trigger's card template carries no acceptance, or an acceptance that only restates the template's title. The refusal names the trigger. | the config validator | the test suite | |
 | R-SCHED-41 | Rigger refuses a configuration in which a clock trigger's card template carries labels that `### R-SCHED-41 — The template labels Rigger refuses` marks refused. The refusal names the trigger and the labels. | the config validator | the test suite | |
 | R-SCHED-55 | Rigger refuses a configuration in which a clock trigger's card template carries a hand label, in any letter case. The refusal names the trigger and the label. | the config validator | the test suite | |
-| R-SCHED-43 | While a declared clock trigger keeps `rigger run` up, that run skips each card it has set aside, and never claims a skipped card. A run sets a card aside when, having claimed it, it leaves it out of its later pulls. The skip ends when a read of the board that Rigger begins after setting the card aside finds the card in a column other than the one Rigger last knew it in. That column is the one Rigger read when it claimed the card, as changed by each of the run's own column changes of it that the board accepted. A read begun after setting the card aside that finds it in Ready ends the skip where the column Rigger last knew it in is another. A column change undone before Rigger next reads the board can go unseen, and the card then stays skipped. | the engine | the test suite | |
 | R-SCHED-20 | When Rigger closes admission itself, it opens an issue titled `Rigger closed admission` in the owner's column, carrying the status label Rigger fixes. It opens none where an open issue carrying that label exists. The issue names the reason, the evidence and the card whose failures closed admission. | the engine | the test suite | |
 | R-SCHED-27 | Rigger never works an item carrying the status label as a card: it never claims it, dispatches nothing for it, and never reports it as refused. An issue a person or `rigger resume` removes the label from is no longer the status issue. | the engine | the test suite | |
 | R-SCHED-22 | The card whose second failure closed admission stays in its column. | the engine | the event record, by that card's transitions while admission is closed | |
@@ -264,11 +263,11 @@ Each row of this table is one state of the card and of the run. A card is in sco
 state matches the in-scope row at every moment from its start under `R-SCHED-29` until its bound
 ends. A state matching an out-of-scope row at any moment in that span takes the card out of scope.
 
-| A pull would claim the card | `R-SCHED-43` keeps the card skipped | Admission | A slot | Scope |
+| A pull would claim the card | `R-SCHED-63` keeps the card skipped | Admission | A slot | Scope |
 |---|---|---|---|---|
 | yes | no | open | free | in |
 | no | any | any | any | out: `R-CARD-7`, `R-SCHED-11`, `R-SCHED-12` and `R-SCHED-27` govern it |
-| yes | yes | any | any | out: `R-SCHED-43` governs it |
+| yes | yes | any | any | out: `R-SCHED-63` governs it |
 | yes | no | closed | any | out: `R-SCHED-3` governs it |
 | yes | no | open | none free | out |
 
@@ -298,10 +297,10 @@ Where none of them does, `R-SCHED-44` to `R-SCHED-47` govern, beside any other r
 | has no acceptance, or one that only restates its title (`R-CARD-7`, `R-CARD-8`) | `R-SCHED-44` to `R-SCHED-47` | the card as refused, naming each hand label it carries and no other reason | in |
 | is selected by two or more kinds of work (`R-SCHED-12`) | `R-SCHED-44` to `R-SCHED-47` | the card as refused, naming each hand label it carries and no other reason | in |
 | carries labels selecting different tiers or providers for its maker (`R-LOOP-13`, `R-LOOP-16`) | `R-SCHED-44` to `R-SCHED-47` | the card as refused, naming each hand label it carries and no other reason | in |
-| has its line of work, or a merged pull request from it, on the forge (`R-WORK-19`) | `R-SCHED-44` to `R-SCHED-47`, so Rigger escalates nothing for it | the card as refused, naming each hand label it carries and no other reason | in |
+| has its line of work, or a merged pull request from it, on the forge (`R-WORK-55`) | `R-SCHED-44` to `R-SCHED-47`, so Rigger escalates nothing for it | the card as refused, naming each hand label it carries and no other reason | in |
 | is one a pull would not claim, the first out-of-scope row of `### R-SCHED-29 — The Ready cards a clock-held run pulls` | `R-SCHED-44` to `R-SCHED-47`, and the card is outside `R-SCHED-29`'s bound | the card as refused, naming each hand label it carries | in |
 | is in Ready while admission is closed, or its record cannot be read (`R-SCHED-3`, `R-SCHED-18`) | `R-SCHED-44` to `R-SCHED-47`, beside `R-SCHED-18` for what the next run would pull | the card as refused, in every state of admission | in |
-| is set aside by a clock-held run (`R-SCHED-43`) | both: the run never claims the card | the card as refused, naming each hand label it carries | in |
+| is set aside by a clock-held run (`R-SCHED-63`) | both: the run never claims the card | the card as refused, naming each hand label it carries | in |
 
 ### R-SCHED-49 — A hand label over a card's life
 
@@ -336,7 +335,6 @@ In this table, "a read" is a read of the board that Rigger begins.
 | R-WORK-16 | — it is not the worktree Rigger was handed as the repository, whatever line of work that worktree holds; | the engine | the test suite | |
 | R-WORK-17 | — no other worktree of the repository, the handed one included, lies inside it. | the engine | the test suite | |
 | R-WORK-18 | Rigger moves a card to review only once its maker has exited successfully and the forge holds an open pull request from the card's line of work. Except as `R-LOOP-21` to `R-LOOP-24` give, a maker that exits successfully with no such pull request leaves the card where it was, and Rigger names the card and why. | the engine | the test suite | |
-| R-WORK-19 | Rigger never starts a card's work from the beginning while the forge holds the card's line of work, or a merged pull request from it. It refuses the card, naming it and what the forge holds. | the engine | the test suite | D10 |
 | R-WORK-20 | Where a directory is at the path of the directory Rigger makes for a judge's dispatch, and any condition below does not hold, Rigger dispatches no judge there, names the path, and changes nothing. Rigger replaces that directory only when all of these hold: | the engine | the test suite | |
 | R-WORK-21 | — everything in it is a worktree added to the repository Rigger works, each at a detached commit; | the engine | the test suite | |
 | R-WORK-22 | — none of them is the worktree Rigger was handed as the repository; | the engine | the test suite | |
@@ -349,22 +347,20 @@ In this table, "a read" is a read of the board that Rigger begins.
 | R-WORK-29 | — it is no worktree of the repository Rigger works, lies in none, and holds none. | the engine | the test suite | |
 | R-WORK-31 | A session Rigger dispatches leaves no file of its own outside its dispatch's directory and its scratch directory, read on real paths once the session's process has ended. Its bound is in `### R-WORK-31 — Where a dispatched session's files land`. | the engine | the test suite | |
 | R-WORK-32 | Where a directory is at the path Rigger makes for the dispatch of a role an escalation goes to, Rigger replaces it only when `R-WORK-21` to `R-WORK-23` all hold of it. Otherwise Rigger dispatches no role there, names the path, and changes nothing. | the engine | the test suite | |
-| R-WORK-43 | Except as `R-LOOP-20` gives, after an attempt that continues a card's work, where the maker exits successfully, Rigger moves the card to review and decides its judges only at the head the maker left. That head is the commit at the tip of the card's line of work in its workspace when the maker exits. Rigger reads the card's pull request again 5 seconds after each read showing another head, until a read made 60 seconds or more after the first. Where no read shows the head the maker left, the card stays in coding. Rigger then names the card, the head the maker left, and the head the forge last showed. Its states are in `### R-WORK-43 — The head a continuing attempt is judged at`. | the engine | the test suite | |
 | R-WORK-35 | Before Rigger moves a card to Done for its merged pull request, whoever merged it, Rigger removes the card's directories. They are its workspace and each directory under `judges/<topic>`, `escalations/<topic>` and `scratch/<topic>` for the card's topic, whichever role it is named for. Rigger removes each only where `R-WORK-13`, `R-WORK-20`, `R-WORK-26` or `R-WORK-32` lets Rigger replace it, and otherwise names the path and leaves it. Rigger moves the card to Done only once no removal failed, and a path left under those rows is no failure. Where a removal failed, the card stays where it is, and Rigger names each path that remains. The states it covers are in `### R-WORK-35 — When a merged card's directories are removed`. | the engine | the test suite | |
-| R-WORK-41 | Before Rigger acts on a closed card satisfying `R-WORK-37` to `R-WORK-40`, it removes the card's directories as `R-WORK-35` names them. It leaves and names each directory that `R-WORK-35` does not let it remove. Where removal fails, Rigger names each remaining path and performs the following action. In a no-clock `run`, Rigger defers removal and its following action to the next invocation when it already began that same removal action in this invocation. It also defers both when `R-LOOP-19` bars the following maker. Rigger likewise defers both when it could not read whether a prior non-zero maker left its line or a pull request on the forge. A new closed pull request number or changed head is a different removal action. The states it covers are in `### R-WORK-41 — When a closed card's directories are removed`: | the engine | the test suite | |
-| R-WORK-37 | — the card is in review or in the owner's column; | the engine | the test suite | |
-| R-WORK-38 | — the card carries no escalation label; | the engine | the test suite | |
-| R-WORK-39 | — the forge holds a pull request from the card's line of work closed without merging, and none from it open or merged; | the engine | the test suite | |
-| R-WORK-40 | — no dispatch of the card runs. | the engine | the test suite | |
 | R-WORK-42 | A maker Rigger dispatches, on any provider Rigger ships and on each host Rigger supports, can commit to its card's line of work and push that line, under the settings `rigger init` gives a consumer. | the engine | the test suite | |
 | R-WORK-44 | Once a dispatch has ended, and before Rigger acts on its outcome, Rigger removes the dispatch's scratch directory and every leftover in it, whatever role the dispatch was for. A leftover is anything under that directory, a git repository among them, that was not there when the dispatch began. Rigger removes a git checkout, or a worktree of the repository Rigger works, only where it shows that the dispatch made it. A dispatch has ended once Rigger has ended its processes, or recorded those it could not end, as `R-STATE-17`, `R-STATE-19` and `R-STATE-29` oblige. Rigger retains only what a row of `### R-WORK-44 — A dispatch's scratch directory once it ends` retains. | the engine | the test suite | |
 | R-WORK-45 | A dispatch's scratch directory holds nothing an earlier dispatch left when the dispatch begins, whichever card or role the earlier dispatch was for. Rigger refuses no dispatch on account of anything an earlier dispatch left under its scratch directory, whether Rigger removed it, failed to remove it, or retains it. | the engine | the test suite | |
-| R-WORK-46 | Rigger names each leftover it retains under `R-WORK-44`, with its card, its role and the row that retains it, in its output and in the event record at the end of the dispatch that left it. Except for one that the row retaining it leaves for a person, Rigger tries again to remove each such leftover before it next dispatches any role for that card. It also tries again before `R-WORK-35` or `R-WORK-41` removes the card's directories. | the engine | the test suite | |
+| R-WORK-46 | Rigger names each leftover it retains under `R-WORK-44`, with its card, its role and the row that retains it, in its output and in the event record at the end of the dispatch that left it. Except for one that the row retaining it leaves for a person, Rigger tries again to remove each such leftover before it next dispatches any role for that card. It also tries again before `R-WORK-35` or `R-WORK-56` removes the card's directories. | the engine | the test suite | |
 | R-WORK-47 | Once each dispatch of a card has ended, Rigger keeps no more under the worktree root for that card than what follows, however many dispatches the card has had. That is its workspace, one directory for each judge role and each escalation role dispatched for it, and the leftovers `### R-WORK-44 — A dispatch's scratch directory once it ends` retains. The directories on the path to each of them count among it. | the engine | the test suite | |
 | R-WORK-48 | Where a card stops being worked in a way `### R-WORK-48 — A card's directories once it stops being worked` names, Rigger removes or retains each directory it made for the card as that table states. Rigger keeps a retained one only until the event that table names. | the engine | the test suite | |
 | R-WORK-49 | `rigger doctor` names each directory under the worktree root that Rigger retains under either `### R-WORK-44 — A dispatch's scratch directory once it ends` or `### R-WORK-48 — A card's directories once it stops being worked`. It names one only while no dispatch of its card runs, with the card where the board holds it and the row that retains it. A directory it names leaves `doctor`'s exit status as it is. | the engine | the test suite | |
 | R-WORK-55 | Except as `R-WORK-57` gives, Rigger never starts a card's work from the beginning while the forge holds the card's line of work, or a merged pull request from it. It refuses the card, naming it and what the forge holds. | the engine | the test suite | D10 |
-| R-WORK-56 | Except as `R-WORK-59` defers it, before Rigger acts on a closed card satisfying `R-WORK-37` to `R-WORK-40`, it removes the card's directories as `R-WORK-35` names them. It leaves and names each directory that `R-WORK-35` does not let it remove. Where removal fails, Rigger names each remaining path and performs the following action. The states it covers are in `### R-WORK-56 — When a closed card's directories are removed`. | the engine | the test suite | |
+| R-WORK-56 | Except as `R-WORK-59` defers it, before Rigger acts on a closed card satisfying `R-WORK-37` to `R-WORK-40`, it removes the card's directories as `R-WORK-35` names them. It leaves and names each directory that `R-WORK-35` does not let it remove. Where removal fails, Rigger names each remaining path and performs the following action. The states it covers are in `### R-WORK-56 — When a closed card's directories are removed`, and it binds a card where all of these hold: | the engine | the test suite | |
+| R-WORK-37 | — the card is in review or in the owner's column; | the engine | the test suite | |
+| R-WORK-38 | — the card carries no escalation label; | the engine | the test suite | |
+| R-WORK-39 | — the forge holds a pull request from the card's line of work closed without merging, and none from it open or merged; | the engine | the test suite | |
+| R-WORK-40 | — no dispatch of the card runs. | the engine | the test suite | |
 | R-WORK-59 | In a no-clock `run`, Rigger defers a removal under `R-WORK-56`, and its following action, to the next invocation where any one of these holds: | the engine | the test suite |  |
 | R-WORK-60 | — Rigger already began that same removal action in this invocation. A new closed pull request number, a changed head, or an owner's answer given since Rigger began it makes a different removal action; | the engine | the test suite |  |
 | R-WORK-61 | — `R-LOOP-19` bars the following maker; | the engine | the test suite |  |
@@ -416,8 +412,8 @@ In this table, "a read" is a read of the board that Rigger begins.
 | a directory of the card already gone, with or without its registration | in: nothing fails; git then lists no registration of the card's whose directory is gone, unless a person locked it |
 | a worktree of the card's that a person locked | in: left as it is, its lock kept, and named; the card stays where it is until the lock is lifted |
 | a person moved the card to Done before Rigger read the merge | out: Rigger reads no Done card, and its directories stay |
-| a Ready or Coding card whose pull request is merged | out: Rigger refuses it under `R-WORK-19`, and its directories stay |
-| a pull request closed without merging, and none merged | out: `R-WORK-41` answers it |
+| a Ready or Coding card whose pull request is merged | out: Rigger refuses it under `R-WORK-55`, and its directories stay |
+| a pull request closed without merging, and none merged | out: `R-WORK-56` answers it |
 | a dispatch of the card by a judge, or by a role an escalation goes to, still running when its pull request merges | in: removed at the first pull that reads the merge once no dispatch of the card runs |
 | a process Rigger did not start working in a directory | out: removal proceeds, as it does when Rigger replaces the directory |
 | a process Rigger started and could not end, working in a directory | out: removal proceeds, as for a process Rigger did not start |
@@ -427,34 +423,6 @@ In this table, "a read" is a read of the board that Rigger begins.
 | `judges/<topic>`, `escalations/<topic>` and `scratch/<topic>`, once empty | in: removed where each is a directory and not a symbolic link, and so is `judges`, `escalations` or `scratch` above it; otherwise left and named |
 | the card's local branch | out: kept |
 | output an agent CLI other than Claude Code writes outside the scratch base | out: until that adapter's spike measures it. Claude Code's lies under the dispatch's directory |
-
-### R-WORK-41 — When a closed card's directories are removed
-
-For an in-scope row, the no-clock deferrals in `R-WORK-41` apply before Rigger claims removal. When Rigger defers it, neither removal nor its following action occurs in that invocation.
-
-Each row is a card the forge holds a pull request for, from its line of work, closed without merging.
-
-| Situation | Scope |
-|---|---|
-| a card in review, its line of work still on the forge | in: removed; Rigger then refuses the card and escalates it under `R-ESCALATE-12`, as it would otherwise |
-| a card in review, its line of work deleted | in: removed; Rigger then does the card again from the beginning under `R-WORK-24` |
-| a card in the owner's column | in: removed; Rigger then refuses the card and escalates it under `R-ESCALATE-12`, as it would otherwise |
-| a card carrying the escalation label | out: `R-ESCALATE-10`; its directories stay until the owner removes the label, and a later pull that finds every condition removes them |
-| two or more pull requests closed, none open or merged | in: removed |
-| a pull request from the line of work open beside the closed one | in: nothing removed |
-| a pull request from the line of work merged beside the closed one | out: `R-WORK-35` answers it |
-| the pull request reopened before Rigger reads it | in: nothing removed |
-| the pull request reopened after Rigger read it closed | in: nothing restored; each later dispatch's directory is made as `R-WORK-20`, `R-WORK-25`, `R-WORK-26` or `R-WORK-32` requires |
-| an attempt from the beginning, started after the removal | in: nothing of the attempt's removed under this row while the card is in coding |
-| a card that is Ready or in coding | out: its next attempt replaces its directories under `R-WORK-10` or `R-WORK-25`, or `R-WORK-19` refuses it |
-| a dispatch of the card running when Rigger reads the pull request closed | in: removed at the first pull that finds every condition once no dispatch of the card runs |
-| a person moved the card to Done | out: Rigger reads no Done card, and its directories stay |
-| the card's issue closed while the card stays in review or in the owner's column | in: as the rows above answer it; the issue's state is no condition |
-| a removal that fails, wholly or partway through one directory | in: each remaining path named; Rigger acts on the card as it otherwise would; a later pull that finds every condition removes again |
-| Rigger cannot record an event of the removal | in: Rigger says what went unrecorded, and acts on the card as it otherwise would |
-| a second removal pass over a card already removed, or none of its directories exists | in: nothing changes, and nothing fails |
-| a check, a lock, a symbolic link, a process in a directory, a workspace's contents, or a topic directory once empty | in or out as `### R-WORK-35`'s table answers that situation |
-| the card's local branch | out: kept |
 
 ### R-WORK-31 — Where a dispatched session's files land
 
@@ -480,20 +448,6 @@ Claude Code's configuration home is `~/.claude` unless the consumer moves it. Ea
 | anything | Codex | out: no claiming card yet; the home Codex keeps for the dispatch, written `<Codex home>`, lies under its scratch directory, and its linked `<Codex home>/auth.json` (#646) is the known path outside |
 | anything | a Claude Code version other than the one the claiming test names | out |
 
-### R-WORK-43 — The head a continuing attempt is judged at
-
-| The maker | What Rigger reads after the maker exits | Scope |
-|---|---|---|
-| exits successfully | the pull request at the head the maker left, at the first read | in: moved to review; judges decided at that head |
-| exits successfully, having added no commit to the line of work | the pull request at the head the attempt started from, which is the head the maker left | in: escalated as ambiguous under `R-LOOP-20`; not moved to review |
-| exits successfully | the pull request at another head, then at the head the maker left at any later read, the last included | in: moved to review; judges decided at the head the maker left |
-| exits successfully | the pull request at another head on every read until one made 60 seconds or more after the first | in: stays in coding; Rigger names the card and both heads |
-| exits successfully | no tip of the card's line of work Rigger can read in its workspace | in: stays in coding; Rigger names the card and why |
-| exits successfully | no open pull request from the card's line of work, or more than one | in: stays in coding, under `R-WORK-18` |
-| exits successfully | a read of the card's pull requests that fails | in: stays in coding; Rigger names the card and the read |
-| exits unsuccessfully, or never starts | nothing | out: the forge is not read, and the card stays in coding |
-| starts the card's work from the beginning | any | out: `R-WORK-18` alone governs it |
-
 ### R-WORK-44 — A dispatch's scratch directory once it ends
 
 Each row is one thing under a dispatch's scratch directory once the dispatch has ended, or one way that end or its removal goes. Each row that retains a leftover names the event that removes it.
@@ -514,16 +468,16 @@ Each row is one thing under a dispatch's scratch directory once the dispatch has
 | a removal that fails wholly or partway through, or a check that git or the file system gives no answer to, or none in time | in: each remaining path retained and named under `R-WORK-46`, and Rigger acts on the outcome as it otherwise would. The next dispatch of that card and role proceeds under `R-WORK-45`, and Rigger removes again at each event `R-WORK-46` names. The failure fails no dispatch, and counts toward no hold under `R-FAIL-8` |
 | Rigger cannot record an event of the removal | in: Rigger says in its output what went unrecorded, and acts on the outcome as it otherwise would |
 | a process `R-STATE-17` or `R-STATE-29` obliges Rigger to end, working in a leftover, which Rigger ends | in: the dispatch ends once that process is ended, and the leftover is then removed |
-| a sign under `R-STATE-31` or `R-STATE-32` naming a process of the dispatch, its process group, its scratch directory or the dispatch, because Rigger could not end a process under `R-STATE-19` or could not read which processes worked there | in: the scratch directory retained and named, since its removal would end a sign with no read showing its processes gone. Rigger removes it at the first event `R-WORK-46` names once no sign names it, as `R-STATE-35`'s start shows. Where `R-WORK-35` or `R-WORK-41` removes the card's directories first, `### R-WORK-35`'s table answers it as a process in a directory |
+| a sign under `R-STATE-31` or `R-STATE-32` naming a process of the dispatch, its process group, its scratch directory or the dispatch, because Rigger could not end a process under `R-STATE-19` or could not read which processes worked there | in: the scratch directory retained and named, since its removal would end a sign with no read showing its processes gone. Rigger removes it at the first event `R-WORK-46` names once no sign names it, as `R-STATE-35`'s start shows. Where `R-WORK-35` or `R-WORK-56` removes the card's directories first, `### R-WORK-35`'s table answers it as a process in a directory |
 | a process `R-STATE-17` does not oblige Rigger to end, working in a leftover | out: removal proceeds, as `### R-WORK-35`'s table has it for a process Rigger did not start |
 | Rigger stopped, or killed outright, while the dispatch ran or after it ended and before its scratch directory was removed | in: the leftovers stay until Rigger next starts; that start ends what remains of the dispatch as `R-STATE-10` and `R-STATE-35` have it; Rigger then removes them at the first event `R-WORK-46` names |
 | Rigger's own exit running past the fixed time of `R-STATE-28` before the removal | in: as for Rigger killed outright |
 | a card carrying the escalation label when its dispatch ends, whoever added it | in: the scratch directory retained and named, since `R-ESCALATE-10` and `D27` rule 1 have Rigger act on no such card; removed at the first event `R-WORK-46` names after the owner removes the label, or when `R-WORK-35` removes the card's directories |
-| a leftover a dispatch left before Rigger met `R-WORK-44`, of which the git repositories under a reviewer's temporary directory for card 95 of the Emend engine on 2026-11-27 are an instance | in: retained and left for a person, since Rigger cannot show which dispatch made it; named under `R-WORK-49`. No later dispatch uses its directory, and `R-WORK-45` refuses none for it. `R-WORK-35` and `R-WORK-41` answer it as `R-WORK-26` lets them |
+| a leftover a dispatch left before Rigger met `R-WORK-44`, of which the git repositories under a reviewer's temporary directory for card 95 of the Emend engine on 2026-11-27 are an instance | in: retained and left for a person, since Rigger cannot show which dispatch made it; named under `R-WORK-49`. No later dispatch uses its directory, and `R-WORK-45` refuses none for it. `R-WORK-35` and `R-WORK-56` answer it as `R-WORK-26` lets them |
 | two dispatches of one card and role, one after the other | in: the later dispatch's scratch directory holds nothing the earlier one left, under `R-WORK-45` |
 | judges of one panel running together | in: removing one judge's scratch directory changes nothing in another's |
 | a file the session wrote outside its scratch directory | out: `R-WORK-31` bounds where it lands, and `R-WORK-44` removes nothing outside the scratch directory |
-| anything in the directory the dispatch ran in: the card's workspace, a judge's directory, or an escalation directory | out: `R-WORK-13`, `R-WORK-20`, `R-WORK-32`, `R-WORK-35` and `R-WORK-41` answer it |
+| anything in the directory the dispatch ran in: the card's workspace, a judge's directory, or an escalation directory | out: `R-WORK-13`, `R-WORK-20`, `R-WORK-32`, `R-WORK-35` and `R-WORK-56` answer it |
 
 ### R-WORK-48 — A card's directories once it stops being worked
 
@@ -532,9 +486,9 @@ A card stops being worked when no dispatch of it runs, and Rigger starts none fo
 | How the card stops being worked | Scope |
 |---|---|
 | its pull request merged, and Rigger reads the merge | in: removed under `R-WORK-35`. A path `R-WORK-35` leaves after a failed removal, an unanswered check or a person's lock is kept only until the later pull or the lifted lock that `### R-WORK-35`'s table names, while the card stays where it is. A path it leaves as a refusal is retained until a person removes it, and named under `R-WORK-49` |
-| its pull request closed without merging, where `R-WORK-37` to `R-WORK-40` hold | in: removed under `R-WORK-41`. A path `R-WORK-41` leaves after a failed removal, an unanswered check or a person's lock is kept only until the later pull or the lifted lock that `### R-WORK-41`'s table names. A path it leaves as a refusal is retained until a person removes it, and named under `R-WORK-49` |
+| its pull request closed without merging, where `R-WORK-37` to `R-WORK-40` hold | in: removed under `R-WORK-56`. A path `R-WORK-56` leaves after a failed removal, an unanswered check or a person's lock is kept only until the later pull or the lifted lock that `### R-WORK-56`'s table names. A path it leaves as a refusal is retained until a person removes it, and named under `R-WORK-49` |
 | a person, or the forge acting on a person's merge or close, moves the card to Done before Rigger reads a merge, or with none | in: retained, since Rigger reads no Done card; kept until a person removes them, or until the card leaves Done for a column Rigger works and its next attempt replaces them; named under `R-WORK-49` |
-| the card carries the escalation label, in any column, whatever its category or raiser, a refusal under `R-WORK-19` or `R-ESCALATE-12` among them | in: retained under `R-ESCALATE-10` and `D27` rule 1; kept until the owner removes the label and Rigger works the card again, or until `R-WORK-35` removes them for a merged pull request; named under `R-WORK-49` |
+| the card carries the escalation label, in any column, whatever its category or raiser, a refusal under `R-WORK-55` or `R-ESCALATE-12` among them | in: retained under `R-ESCALATE-10` and `D27` rule 1; kept until the owner removes the label and Rigger works the card again, or until `R-WORK-35` removes them for a merged pull request; named under `R-WORK-49` |
 | the card's issue closed with no pull request from its line of work | in: the issue's state is no condition; the row for the card's column, its label, or its place on the board answers it |
 | the card taken off the board | in: retained, since Rigger reads only the board's cards; kept until a person removes them, or until the card returns to the board and its next attempt replaces them; named under `R-WORK-49` |
 | admission closed, by a hold under `R-FAIL-8` or by the owner's pause | in: retained while admission stays closed; once it reopens, the row for the card's state answers it, or its next attempt replaces them; named under `R-WORK-49` |
@@ -542,7 +496,7 @@ A card stops being worked when no dispatch of it runs, and Rigger starts none fo
 | a card that stops after two attempts fail in different host ways, or at an attempt meeting a branch name git refuses or a worktree root that is no absolute path (`### R-FAIL-8 — Environment failures and the hold`) | in: retained; kept until its next attempt replaces them, or another row answers the card; named under `R-WORK-49` |
 | a card in the owner's column awaiting the owner's verdict: every agent judge sound at its head, no escalation label, and no owner marker there | in: retained; kept until the owner's marker lets Rigger act on the card again, after which a row above answers it, or its next attempt replaces them; named under `R-WORK-49` |
 | a card whose judges are sound and whose merge waits on the forge: its required checks still running or not passing, or its mergeability unknown (`R-SCHED-26`) | in: retained; kept until a later pull reads the forge changed, after which a row above answers it, or its next attempt replaces them; named under `R-WORK-49` |
-| a card a run held up by a clock trigger has set aside (`R-SCHED-43`) | in: retained while the skip lasts; kept until the column change that ends the skip, or that run's end, after which a row above answers it, or its next attempt replaces them; named under `R-WORK-49` |
+| a card a run held up by a clock trigger has set aside (`R-SCHED-63`) | in: retained while the skip lasts; kept until the column change that ends the skip, or that run's end, after which a row above answers it, or its next attempt replaces them; named under `R-WORK-49` |
 | a card with a dispatch still running | out: it is still being worked, and `R-WORK-44` answers each dispatch as it ends |
 
 ### R-WORK-56 — When a closed card's directories are removed
@@ -621,7 +575,6 @@ Each row is a card in Ready, in coding, in review or in the owner's column, whos
 | R-LOOP-5 | Every judge rules on every acceptance item, recording each as met or unmet. | the role prompt | the gate, for omitted items only | D2 |
 | R-LOOP-6 | Every judge rules on whether the acceptance covered what the card asked. A judge finding it did not returns the card to its author with the reason, and never rewrites the acceptance. | the role prompt, and the engine for the return | the gate, for an omitted coverage ruling | D2 |
 | R-LOOP-7 | The agent judges for a card rule without waiting for each other. | the engine | the event record, by overlapping judge dispatches | D6 |
-| R-LOOP-8 | A change to the work, or to the acceptance, sends every judge back. Either spends one round. | the engine | the event record, by rounds against changes | D2, D3 |
 | R-LOOP-9 | A disagreement is bounded. The consumer sets how many rounds each kind of work gets, three unless the consumer says otherwise. Exhausting them escalates the card as ambiguous. | the engine | the event record, by rounds against the configured bound | D3, D4 |
 | R-LOOP-10 | No role settles a disagreement between a maker and a judge. | the consumer's configuration | the config validator | D4 |
 | R-LOOP-11 | The owner, when named as a judge, judges last and is asked only once every agent judge is satisfied. The owner is never dispatched. | the engine | the event record, by a dispatch naming the owner | D3 |
@@ -631,8 +584,7 @@ Each row is a card in Ready, in coding, in review or in the owner's column, whos
 | R-LOOP-15 | A role's dispatch runs no longer than the consumer allows that role, four hours unless the consumer says otherwise. A dispatch that runs past its time has failed. | the engine | the test suite | |
 | R-LOOP-16 | A role runs on the provider the consumer declares for it, unless a card label the consumer declares selects another provider for that role. Rigger refuses a card carrying two labels that select different providers for one role, naming the role and each label. | the engine | the test suite | D24 |
 | R-LOOP-17 | An agent judge whose entry carries a provider rule runs on the provider that rule gives: the fixed provider, or the one the rule names for the provider its maker runs on. | the engine | the test suite | D24 |
-| R-LOOP-19 | Rigger dispatches no maker again, in the invocation that ran it, for a card whose maker exited non-zero and left the forge holding nothing of the card's line of work. The forge holds nothing of it where it holds no branch of it and no open or merged pull request from it. A card whose skip `R-SCHED-43` ends is the exception, and Rigger then dispatches it as it would any other. The next invocation dispatches the card as it would any other. | the engine | the test suite | |
-| R-LOOP-20 | A maker continuing a card that exits successfully and leaves its head as it found it answers nothing. Rigger then escalates the card as ambiguous, whatever rounds remain, and dispatches no maker for it until the owner answers. | the engine | the test suite | D3 |
+| R-LOOP-19 | Rigger dispatches no maker again, in the invocation that ran it, for a card whose maker exited non-zero and left the forge holding nothing of the card's line of work. The forge holds nothing of it where it holds no branch of it and no open or merged pull request from it. A card whose skip `R-SCHED-63` ends is the exception, and Rigger then dispatches it as it would any other. The next invocation dispatches the card as it would any other. | the engine | the test suite | |
 | R-LOOP-21 | Rigger escalates a card as ambiguous, naming why, where its maker has delivered nothing, and dispatches no maker for it until the owner answers. A maker has delivered nothing where all of these hold: | the engine | the test suite | D3 |
 | R-LOOP-22 | — the maker started the card's work from the beginning; | the engine | the test suite | |
 | R-LOOP-23 | — the maker exited successfully; | the engine | the test suite | |
@@ -851,7 +803,7 @@ Each row is a comment on the card's issue, unless it says otherwise. "Given" mea
 | id | requirement | made true by | checked by | from |
 |---|---|---|---|---|
 | R-STATE-1 | The board is the truth for a card's workflow state. Rigger persists no card workflow state of its own. | the engine | the test suite | D1 |
-| R-STATE-2 | A restart loses no card and completes no partial one. A card interrupted mid-flight is done again from the beginning, except where `R-WORK-19` refuses to start that card's work again. | the engine | the test suite | D1, D10 |
+| R-STATE-2 | A restart loses no card and completes no partial one. A card interrupted mid-flight is done again from the beginning, except where `R-WORK-55` refuses to start that card's work again. | the engine | the test suite | D1, D10 |
 | R-STATE-3 | A card done again after an interruption is distinguishable afterwards from one done at the first attempt. | the engine | the event record | D1 |
 | R-STATE-4 | Except as `R-RECORD-19` gives, Rigger persists only what it cannot rebuild from the board: whether admission is open and why it closed, the processes it must still clean up, and the record. Each survives a restart. | the engine | the test suite | D1 |
 | R-STATE-17 | A process works in a directory when its working directory is that directory or lies under it. A process outside every process group Rigger created, and working in no directory Rigger made for a dispatch, is outside this rule. Except as `R-STATE-19` and `R-STATE-28` allow, Rigger ends every process in a process group it created, and every process of its own user working in a dispatch's directory, whenever any of these holds: | the engine | the test suite | |
@@ -974,7 +926,7 @@ Each failure is one of three classes:
 | a role's scratch directory refused under `R-WORK-26`, the maker's or a judge's | card-local | — | in: `R-ESCALATE-12` |
 | a judge's directory refused under `R-WORK-20` | card-local | — | in: `R-ESCALATE-12` |
 | the card's branch checked out in a worktree elsewhere (`R-WORK-25`) | card-local | — | in: `R-ESCALATE-12` |
-| the forge holding the card's line of work, or a merged pull request from it, under `R-WORK-19` | card-local | — | in: `R-ESCALATE-12` |
+| the forge holding the card's line of work, or a merged pull request from it, under `R-WORK-55` | card-local | — | in: `R-ESCALATE-12` |
 | more than one open pull request from the card's line of work | card-local | — | in: `R-ESCALATE-12` |
 | a card in the owner's column with no pull request from its line of work | card-local | — | in: `R-ESCALATE-12` |
 | a host failure on one attempt and a card-local refusal on the other | card-local | — | in: `R-ESCALATE-12`, never a hold |
@@ -1060,8 +1012,8 @@ Each failure is one of three classes:
 | R-RECORD-7 | Every event says when it happened, which run it belongs to, and which card and dispatch it concerns, so a reader can put two events beside each other. | the engine | the test suite | |
 | R-RECORD-9 | When Rigger cannot record an event, it says what went unrecorded and starts no further work until it can. | the engine | the test suite | |
 | R-RECORD-10 | Rigger's record of the end of every merge its lane starts names why the pull request was not merged, whatever the outcome other than merged. What each outcome names is in `### R-RECORD-10 — Why a merge ended unmerged`. | the engine | the test suite | |
-| R-RECORD-11 | After an attempt that continues a card's work, where the maker exits successfully, Rigger's record names the head of the card's pull request that Rigger last read under `R-WORK-43`. | the engine | the test suite | |
-| R-RECORD-12 | Where Rigger read the forge again under `R-SCHED-26` or `R-WORK-43`, its record of the merge's end, or of the card's move to review or stay in coding, names how many reads it made. It also names how long after the first read the last one came. | the engine | the test suite | |
+| R-RECORD-11 | After an attempt that continues a card's work, where the maker exits successfully, Rigger's record names the head of the card's pull request that Rigger last read under `R-WORK-58`. | the engine | the test suite | |
+| R-RECORD-12 | Where Rigger read the forge again under `R-SCHED-26` or `R-WORK-58`, its record of the merge's end, or of the card's move to review or stay in coding, names how many reads it made. It also names how long after the first read the last one came. | the engine | the test suite | |
 | R-RECORD-13 | A copy of the record that Rigger places beyond the consumer's own machine holds, as of each successful push, every event the original held when that push started. The push states it covers, and the rows governing each, are in `### R-RECORD-13 — Push states`. | the engine | the test suite | |
 | R-RECORD-14 | Where a push of the record does not succeed, Rigger keeps working. It starts and finishes work as it would have had the push succeeded. | the engine | the test suite | |
 | R-RECORD-15 | Where a push of the record does not succeed, Rigger says so in its output, naming the failure, and records the failure. | the engine | the test suite | |

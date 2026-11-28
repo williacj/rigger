@@ -85,7 +85,7 @@ const refusalOf = (text, number) => text.split('\n').find((line) => new RegExp(`
 /** The moves in the fake board's write record, each as the item moved and the column it entered. */
 const movesIn = (model) => model.writes().filter(({ operation }) => operation === 'moveItem').map(({ args }) => args);
 
-// proves R-WORK-19
+// proves R-WORK-55
 test('once builds L2\'s facts call over the read side: a Ready card whose branch the fake gh holds escalates naming its line of work', async () => {
   const seed = { branches: ['rigger-10'] };
 
@@ -98,7 +98,7 @@ test('once builds L2\'s facts call over the read side: a Ready card whose branch
   assert.deepEqual(movesIn(result.model), [['item-1', 'Owner']]);
 });
 
-// proves R-WORK-19
+// proves R-WORK-55
 test('plan names converted forge refusals as escalations beside the ordinary form refusals', async () => {
   const seed = { branches: ['rigger-10'], pullRequests: [{ number: 77, head: 'rigger-20', sha: 'a'.repeat(40), merged: true }] };
   const items = [card(10, 'Ready'), card(20, 'Coding'), card(30, 'Ready', { body: '## Notes\n\nNo acceptance here.\n' }), card(40, 'Ready')];
@@ -132,7 +132,7 @@ test('given a card carrying two labels that select different tiers for its maker
   assert.deepEqual(movesIn(claimed.model), []);
 });
 
-// proves R-LOOP-13, R-WORK-19
+// proves R-LOOP-13, R-WORK-55
 test('given a second card whose labels select two tiers for its maker role and whose line of work the fake gh holds, plan and once each name its role, both labels and its line of work', async () => {
   const items = [card(50, 'Ready', { labels: ['tier:high', 'tier:low'] }), card(60, 'Ready', { labels: ['tier:high', 'tier:low'] })];
   const seed = { branches: ['rigger-60'] };
@@ -153,7 +153,7 @@ test('given a second card whose labels select two tiers for its maker role and w
 import { run } from '../src/cli/run.mjs';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 
-// proves R-WORK-41
+// proves R-WORK-56
 test('run cleans eligible closed history then reports the unchanged form refusal once and exits zero', async () => {
   const directory = temporaryDirectory('rigger-run-closed-refusal-');
   const settings = config();
