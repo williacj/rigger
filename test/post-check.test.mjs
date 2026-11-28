@@ -95,6 +95,7 @@ test('each G6 form is refused as text the check cannot determine', () => {
     ['issue', 'frobnicate'], ['issue', 'comment', '1', '--no-such-flag'], ['issue', 'comment', '1', '-Z'],
     ['issue', 'comment', '1', '--body-file', '-', '--body-file', '-'], ['api', 'x', '-F', 'a=@-', '--input', '-'],
     ['release', 'create', 'v1', '--notes-from-tag'], ['release', 'create', 'v1', '--generate-notes'],
+    ['release', 'create', 'v1', '--notes', 'x', '--notes-from-tag'], ['release', 'create', 'v1', '--notes', 'x', '--generate-notes'],
   ]) assert.equal(row(...argv), 'G6', argv.join(' '));
 });
 
