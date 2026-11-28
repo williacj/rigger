@@ -49,6 +49,7 @@ import { clockVerb } from './clock-report-verb-world.mjs';
 import { reportText } from '../src/cli/report.mjs';
 import { failuresIn, keptUp, keptUpVerb, reportsIn, settledIn } from './kept-up-run.mjs';
 import { keptUpRunVerb } from './kept-up-verb-world.mjs';
+import { l7Trace } from './l7-trace.mjs';
 import { REFUSED as REFUSED_CARD, card as verbCard } from './verb-consumer.mjs';
 import { readEvents as readEventsAt } from '../src/observation/sink.mjs';
 import { EventEmitter } from 'node:events';
@@ -5563,16 +5564,20 @@ test('each hand-over of a clock-held run is handed before the next poll fires', 
 });
 
 test('L7: through the run verb, a clock-held run fires a pull at its slot release', async () => {
+  l7Trace.start();
   const clock = manualClock();
   const { agent, consumer, running, stop } = keptUpRunVerb({ items: [verbCard(10, 'Ready')], plan: { 10: { engineer: { hold: true, pr: true } } }, clock });
   const pulls = () => (fs.existsSync(streamPath(`${consumer}/.rigger`)) ? readEventsAt(`${consumer}/.rigger`) : []).filter(({ event, trigger }) => event === 'trigger' && trigger === 'pull').length;
   try {
     await positive(() => agent.held(10));
     assert.equal(pulls(), 1);
+    l7Trace.released();
     agent.release(10);
     await positive(() => pulls() === 2);
+    l7Trace.ended();
     assert.equal(clock.now(), CLOCK_START, 'the second pull was the slot release\'s, not a poll');
   } finally {
+    l7Trace.ended();
     const stopped = stop();
     if (agent.held(10)) agent.release(10);
     await stopped.catch(() => {});
