@@ -72,13 +72,13 @@ reports no gap of its own; the register carries the reason.
 | R-SCHED-42 | `test/clock-config.test.mjs` C25-C27 C31 C35: a template author is absent, owner, or an own role name, without cascading roles errors |
 | R-SCHED-28 | `test/loop-host.test.mjs` **host** L17: the run bin stays up past the drain and polls while a trigger is declared, and exits 143 at SIGTERM with its hand-overs whole<br>`test/loop.test.mjs` L1: run stays up past the drain while a report trigger is declared, recording one drain for the idle period<br>`test/loop.test.mjs` L2a: a clock declaring only card-shaped triggers keeps run up before its first occurrence<br>`test/loop.test.mjs` L14: a drain that reads admission closed writes each card that settled beside the closers, and a stop answers their status<br>`test/loop.test.mjs` L14: at a drain the run verb writes each card that settled since the previous drain, and does not exit |
 | R-SCHED-29 | `test/loop.test.mjs` L4: an idle poll claims a card that entered Ready no later than the poll interval after it did<br>`test/loop.test.mjs` L11: a poll whose read fails claims nothing, hands its failure over once, and the next poll on schedule claims the card<br>`test/loop.test.mjs` L12: a poll whose trigger event the sink refuses claims no Ready card, and the next poll claims it |
-| R-SCHED-44 | **gap** |
-| R-SCHED-45 | **gap** |
-| R-SCHED-46 | **gap** |
-| R-SCHED-47 | **gap** |
-| R-SCHED-48 | **gap** |
-| R-SCHED-49 | **gap** |
-| R-SCHED-50 | **gap** |
+| R-SCHED-56 | **gap** |
+| R-SCHED-57 | **gap** |
+| R-SCHED-58 | **gap** |
+| R-SCHED-59 | **gap** |
+| R-SCHED-60 | **gap** |
+| R-SCHED-61 | **gap** |
+| R-SCHED-62 | **gap** |
 | R-SCHED-30 | `test/clock-config.test.mjs` C1-C6: clock is optional, and every declared clock requires a positive whole poll |
 | R-SCHED-31 | `test/clock-firing.test.mjs` B1 B22: a firing opens an admitted marked card and run takes it through maker, judges and merge to Done<br>`test/clock-firing.test.mjs` B2: another occurrence creates another card while the earlier occurrence card remains open |
 | R-SCHED-32 | `test/clock-firing.test.mjs` B10: restart finds the fractional-second occurrence once and reads its settled record again<br>`test/issue-opening-clock.test.mjs` W7 W10: a real missing-label opening floors the zero-newest scan, finds its mark and leaves exactly one card in Ready |
