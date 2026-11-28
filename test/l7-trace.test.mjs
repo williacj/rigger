@@ -22,5 +22,7 @@ test('L7 trace excludes setup and teardown and records the start load once', (t)
   l7Trace.ended();
   time = 900;
   l7Trace.ended();
-  assert.deepEqual(written, ['L7 trace: {"releaseToPullMs":37.5,"load1":3.5}\n']);
+  assert.equal(written.length, 1);
+  assert.match(written[0], /^L7 trace: /);
+  assert.deepEqual(JSON.parse(written[0].slice('L7 trace: '.length)), { releaseToPullMs: 37.5, load1: 3.5 });
 });
