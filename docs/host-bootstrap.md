@@ -220,6 +220,37 @@ The list is one UTF-8 file, private-list in the .config/rigger directory under `
 
 A clean result is no privacy check under the next section.
 
+## The pre-post content check
+
+`tools/coordinator/post-check.mjs` checks the text a `gh` command would post against the same rows and list as the pre-push check, before the real `gh` starts. A shell function named `gh`, defined in `tools/coordinator/session-shell.sh`, runs it. A refusal names a row and a part of the post, never what it matched. Its header names what it knows and refuses.
+
+**Routes.**
+
+| Route | Covered |
+|---|---|
+| T1: `gh`, run by a Claude Code session started by hand in the main checkout or a worktree of it, subagents included | yes, once the owner names session-shell.sh as `CLAUDE_ENV_FILE` under `env` in that checkout's git-ignored local settings file |
+| T2: `gh`, run by a Codex maker or judge that `tools/coordinator/codex-maker.sh`, `tools/coordinator/codex-judge.sh` or `tools/coordinator/codex-resume.sh` launches | yes: each launcher names the start files in `tools/coordinator/post-check/` as `ZDOTDIR` and `BASH_ENV`, and turns the shell snapshot off |
+| T3: `git push` | by the pre-push check above |
+| T4: an MCP connector, a browser, `curl`, a program other than `gh`, the web editor, or a session in a clone elsewhere | no |
+| T5: the engine's own forge calls, and `gh` run by a session the engine dispatches | no |
+
+**Hosts.** The list is on the laptop only, so only a session on the laptop can post through the function. A Codex session that a launcher starts on any other host can post nothing, because every post outside the reads is refused for want of the list.
+
+**Limits.** The check does not see past any of these:
+
+- T4 and T5;
+- a `gh` the function is not in front of: `command gh`, `env gh`, an absolute path to `gh`, `gh` in a script file, under `sh -c`, under a shell the session nests, or in a node child, and a Codex session whose own shell is `sh`;
+- a Claude Code session where the CLI scrubs credentials from its subprocesses, which skips `CLAUDE_ENV_FILE`;
+- a Claude Code session started while `CLAUDE_ENV_FILE` names no file, as on a main checkout whose branch lacks session-shell.sh: the CLI ignores it without notice, and every T1 post goes out unchecked;
+- a `gh` alias or function in a login profile read after T2's start file, such as one in .zprofile or .zlogin, which takes the function's place under `zsh -lc`;
+- a session resumed by `tools/coordinator/codex-resume.sh`, shown only by what the launcher passes, not by a live run;
+- a worktree's session, which runs the main checkout's copy, so a branch's edit has no effect until that checkout holds it; a change to the function needs a new session;
+- `HOME` and `PATH`, which can redirect it;
+- the session's account, which can read the list, and a trace of the check's process;
+- an edit or deletion of a post, which does not undo it, and an edit by an uncovered route.
+
+No way past a refusal is given. A clean result is no privacy check under the next section.
+
 ## Spikes on a personal machine
 
 A spike card that adopts this section is what binds: its maker finishes against that card's

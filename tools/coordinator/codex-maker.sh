@@ -25,8 +25,10 @@ sed -e "s|@CARD@|$card|g" -e "s|@BRANCH@|$branch|g" -e "s|@TMP@|$tmp|g" -e "s|@S
 if [ -n "${MAKER_NOTE:-}" ]; then
   printf '\n%s\n' "$MAKER_NOTE" >> "$S/codex-$card-prompt.md"
 fi
+tools="$(cd "$(dirname "$0")" && pwd)"
 cd "$work"
-TMPDIR="$tmp" exec codex exec --json -C "$work" --add-dir "$tmp" \
+TMPDIR="$tmp" ZDOTDIR="$tools/post-check" BASH_ENV="$tools/post-check/bash-env.sh" \
+  exec codex exec --json --disable shell_snapshot --disable shell_snapshot_v2 -C "$work" --add-dir "$tmp" \
   --sandbox danger-full-access \
   -c model_reasoning_effort='"high"' - < "$S/codex-$card-prompt.md" > "$log" 2>&1
 echo "codex exit $? log $log"

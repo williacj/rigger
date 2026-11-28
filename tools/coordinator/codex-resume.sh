@@ -12,8 +12,10 @@ card="$1"; session="$2"; msg="$(cd "$(dirname "$3")" && pwd)/$(basename "$3")"
 root="${RIGGER_WORKTREE_ROOT:-$HOME/GitHub/rigger-worktrees}"
 work="$root/codex-$card"; tmp="$root/codex-$card-tmp"
 S="${CODEX_LOG_DIR:-$root/coordinator-logs}"; mkdir -p "$S"
+tools="$(cd "$(dirname "$0")" && pwd)"
 cd "$work"
-TMPDIR="$tmp" exec codex exec resume --json \
+TMPDIR="$tmp" ZDOTDIR="$tools/post-check" BASH_ENV="$tools/post-check/bash-env.sh" \
+  exec codex exec resume --json --disable shell_snapshot --disable shell_snapshot_v2 \
   -c sandbox_mode='"danger-full-access"' \
   -c model_reasoning_effort='"high"' "$session" - < "$msg" >> "$S/codex-$card.jsonl" 2>&1
 echo "codex exit $? log $S/codex-$card.jsonl"

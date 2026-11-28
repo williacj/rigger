@@ -201,7 +201,7 @@ const ROWS = {
 };
 
 /** The first wording, and so the fullest, that holds no entry of the list. */
-const wording = (entries, ...wordings) => wordings.find((text) => !entries.some((entry) => folded(text).includes(entry.text)));
+export const wording = (entries, ...wordings) => wordings.find((text) => !entries.some((entry) => folded(text).includes(entry.text)));
 
 /** The row and the place on lines of at most three characters, which no entry of four can be in. */
 const shortest = (row, ordinal) => [row, '#', ...String(ordinal).match(/.{1,3}/g)].join('\n');
@@ -343,7 +343,7 @@ function findings(updates, defaultRef, entries) {
   return found;
 }
 
-function readList() {
+export function readList() {
   if (!process.env.HOME) return { refusal: 'the private list is absent' };
   try { return listState(readFileSync(join(process.env.HOME, '.config', 'rigger', 'private-list'))); }
   catch (error) {

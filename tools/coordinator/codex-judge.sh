@@ -49,6 +49,7 @@ if [ -n "${NO_POST:-}" ]; then
   printf '\n%s\n' "**Dry run.** This run checks the judge's output format only. Do not post anything to GitHub: write the verdict file, then skip the post step and finish with your report." >> "$S/$tag-prompt.md"
 fi
 cd "$work"
-TMPDIR="$tmp" exec codex exec --json -C "$work" --add-dir "$base" \
+TMPDIR="$tmp" ZDOTDIR="$tools/post-check" BASH_ENV="$tools/post-check/bash-env.sh" \
+  exec codex exec --json --disable shell_snapshot --disable shell_snapshot_v2 -C "$work" --add-dir "$base" \
   --sandbox danger-full-access \
   -c model_reasoning_effort='"high"' - < "$S/$tag-prompt.md" > "$log" 2>&1
