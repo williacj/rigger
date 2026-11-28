@@ -2008,7 +2008,7 @@ import { factsCall } from '../src/workflow/facts.mjs';
 import { nextAction } from '../src/workflow/next-action.mjs';
 import { createFakeRepository } from './fake-repository.mjs';
 
-// proves R-WORK-41, R-WORK-37
+// proves R-WORK-56, R-WORK-37
 test('the actual board reader carries a captured CLOSED issue and an open issue through identical Review and Owner cleanup eligibility', async () => {
   // gh2.99.0 captured board6 at 2026-09-25T13:35Z. GitHub issue/events reads on 2026-10-22
   // show issue214 closed at05:25:20Z (event05:25:21Z), with no reopen; issue271 was created
@@ -2049,7 +2049,7 @@ test('the actual board reader carries a captured CLOSED issue and an open issue 
 });
 
 
-// proves R-WORK-41
+// proves R-WORK-56
 test('a later closed-result page failure or timeout cannot become partial cleanup facts', async () => {
   for (const position of ['null', 'middle', 'last']) for (const timeout of [false, true]) {
     const pages = {

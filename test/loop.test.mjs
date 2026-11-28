@@ -510,7 +510,7 @@ async function continuingPull(built) {
   return pulled;
 }
 
-// proves R-WORK-43, R-RECORD-11, R-RECORD-12
+// proves R-WORK-58, R-RECORD-11, R-RECORD-12
 test('a continuing maker is judged only after the forge shows the workspace tip on its second read', async () => {
   const old = 'a'.repeat(40);
   const tip = 'b'.repeat(40);
@@ -528,7 +528,7 @@ test('a continuing maker is judged only after the forge shows the workspace tip 
   assert.ok(built.events().some(({ layer, event, role }) => layer === 'L3' && event === 'dispatch' && role === 'reviewer'));
 });
 
-// proves R-WORK-43, R-RECORD-11, R-RECORD-12
+// proves R-WORK-58, R-RECORD-11, R-RECORD-12
 test('a continuing maker stays in coding after the forge shows the old head through the read at 60 seconds', async () => {
   const old = 'a'.repeat(40);
   const tip = 'b'.repeat(40);
@@ -546,7 +546,7 @@ test('a continuing maker stays in coding after the forge shows the old head thro
   assert.deepEqual({ forgeHead: withheld.forgeHead, reads: withheld.reads, elapsedMs: withheld.elapsedMs }, { forgeHead: old, reads: 13, elapsedMs: 60000 });
 });
 
-// proves R-WORK-43, R-RECORD-11, R-RECORD-12
+// proves R-WORK-58, R-RECORD-11, R-RECORD-12
 test('a continuing maker records the last forge head and wait when its pull closes after a stale read', async () => {
   const old = 'a'.repeat(40);
   const tip = 'b'.repeat(40);
@@ -560,7 +560,7 @@ test('a continuing maker records the last forge head and wait when its pull clos
   assert.deepEqual({ forgeHead: withheld.forgeHead, reads: withheld.reads, elapsedMs: withheld.elapsedMs }, { forgeHead: old, reads: 2, elapsedMs: 5000 });
 });
 
-// proves R-WORK-43, R-RECORD-11, R-RECORD-12
+// proves R-WORK-58, R-RECORD-11, R-RECORD-12
 test('a failed second forge read keeps a continuing card in coding and records the last head and wait', async () => {
   const old = 'a'.repeat(40);
   const tip = 'b'.repeat(40);
@@ -579,7 +579,7 @@ test('a failed second forge read keeps a continuing card in coding and records t
   assert.deepEqual({ forgeHead: withheld.forgeHead, reads: withheld.reads, elapsedMs: withheld.elapsedMs }, { forgeHead: old, reads: 2, elapsedMs: 5000 });
 });
 
-// proves R-WORK-43
+// proves R-WORK-58
 test('a continuing maker stays in coding when L1 cannot read a tip from its workspace', async () => {
   const old = 'a'.repeat(40);
   const { built, card } = continuingForge(old, old, undefined, async () => { throw new Error('the branch has no commit'); });
@@ -1164,7 +1164,7 @@ test('from the recorded events of a concurrency 3 run over four cards, the most 
 const { 10_000: SETTLES_WITHIN } = BOUNDS;
 
 // A facts read must not acquire a closed card omitted from its offer or claimed since that offer.
-// proves R-WORK-41
+// proves R-WORK-56
 test('a stale closed-card offer cannot decide or remove a card after a held released or refused intervening claim', async (t) => {
   for (const race of ['held', 'released', 'refused']) {
     const waitingFacts = Promise.withResolvers();
@@ -1233,7 +1233,7 @@ test('a stale closed-card offer cannot decide or remove a card after a held rele
 });
 
 // A begun removal remains remembered even when its following maker never starts.
-// proves R-WORK-41
+// proves R-WORK-56
 test('a no-clock run remembers removal before cleanup and following work but retries a refused removal claim start', async (t) => {
   for (const scenario of ['removed', 'cleanup failed', 'claim refused', 'new number', 'changed head', 'following refusal']) {
     await t.test(scenario, async (t) => {
@@ -1577,7 +1577,7 @@ function closedAfterFailedMaker(t, { exitBranch = 'unreadable', exitPull = 'abse
 }
 
 // An unreadable failed-maker snapshot must not admit a later closed-card redo in the same run.
-// proves R-WORK-41
+// proves R-WORK-56
 test('a no-clock run defers closed-card removal after unreadable maker work and permits it in the next invocation', SETTLES_WITHIN, async (t) => {
   const { built, removals } = closedAfterFailedMaker(t);
   const reached = await drive(built);
@@ -1596,7 +1596,7 @@ test('a no-clock run defers closed-card removal after unreadable maker work and 
 });
 
 // A maker bar does not set the whole card aside when its later action starts no maker.
-// proves R-WORK-41
+// proves R-WORK-56
 test('a no-clock failed-maker bar leaves closed cleanup and its following escalation eligible', SETTLES_WITHIN, async (t) => {
   const formerClock = realHost.clock;
   for (const exitBranch of ['absent', 'unreadable']) {
@@ -1614,7 +1614,7 @@ test('a no-clock failed-maker bar leaves closed cleanup and its following escala
 });
 
 // Established absence bars the following maker and its removal for this invocation alone.
-// proves R-LOOP-19, R-WORK-41
+// proves R-LOOP-19, R-WORK-56
 test('a no-clock absent-work maker bar defers a closed-card redo until a new invocation', SETTLES_WITHIN, async (t) => {
   const { built, removals } = closedAfterFailedMaker(t, { exitBranch: 'absent' });
   const reached = await drive(built);
@@ -1632,7 +1632,7 @@ test('a no-clock absent-work maker bar defers a closed-card redo until a new inv
 
 // R-LOOP-19 row S6e: a forge holding no branch and only closed pull requests holds nothing of the
 // line of work, so L3 bars `remove.following` too, and `R-WORK-41` defers that removal to the next invocation.
-// proves R-LOOP-19, R-WORK-41
+// proves R-LOOP-19, R-WORK-56
 test('S6e: a closed-only forge at a no-clock maker\'s exit defers the closed-card redo until a new invocation', SETTLES_WITHIN, async (t) => {
   const { built, removals } = closedAfterFailedMaker(t, { exitBranch: 'absent', exitPull: 'closed' });
   const reached = await drive(built);
@@ -1646,7 +1646,7 @@ test('S6e: a closed-only forge at a no-clock maker\'s exit defers the closed-car
 });
 
 // Presence established by either source keeps the later removal and maker eligible.
-// proves R-LOOP-19, R-WORK-41
+// proves R-LOOP-19, R-WORK-56
 test('a no-clock maker may redo closed work when either exit-time read establishes presence despite the other failing', SETTLES_WITHIN, async (t) => {
   const formerClock = realHost.clock;
   for (const [exitBranch, exitPull] of [['present', 'unreadable'], ['unreadable', 'open']]) {
@@ -1666,7 +1666,7 @@ test('a no-clock maker may redo closed work when either exit-time read establish
 });
 
 // Early comment or escalation reads must still classify both work sources for L3's maker bar.
-// proves R-LOOP-19, R-WORK-41
+// proves R-LOOP-19, R-WORK-56
 test('early failed-maker reads preserve presence and defer absent or unreadable work before later removal', SETTLES_WITHIN, async (t) => {
   const native = nativeCalls(t);
   const cases = [
@@ -1766,7 +1766,7 @@ test('a no-clock continuing maker runs once per governing comment while failure 
 });
 
 // A successful earlier maker identity must not suppress a newly eligible closed-card redo.
-// proves R-WORK-41
+// proves R-WORK-56
 test('a successful maker whose open pull later closes with its line deleted gets cleanup and a fresh maker under one later claim', SETTLES_WITHIN, async (t) => {
   const order = [];
   const built = onManualHost(t, { cards: [42], concurrency: 1,
@@ -4138,7 +4138,7 @@ test('the loop world opens a new pull after closed history and still suppresses 
 });
 
 
-// proves R-WORK-41, R-WORK-37, R-WORK-39
+// proves R-WORK-56, R-WORK-37, R-WORK-39
 test('one closed-card claim removes before redo Coding or the ordinary Owner operation in every eligible stage and branch cell', SETTLES_WITHIN, async (t) => {
   for (const column of [COLUMNS.review, COLUMNS.owner]) for (const branch of [false, true]) {
     const number = 190;
@@ -4194,7 +4194,7 @@ test('one closed-card claim removes before redo Coding or the ordinary Owner ope
 });
 
 
-// proves R-WORK-41
+// proves R-WORK-56
 test('a closed removal failure retains every remaining path while the ordinary redo or owner escalation still runs under that claim', SETTLES_WITHIN, async (t) => {
   for (const column of [COLUMNS.review, COLUMNS.owner]) {
     const number = 191;
@@ -4229,7 +4229,7 @@ test('a closed removal failure retains every remaining path while the ordinary r
 
 import { factsCall } from '../src/workflow/facts.mjs';
 
-// proves R-WORK-41
+// proves R-WORK-56
 test('a closed removal followed by unchanged refusal or injected ignore runs once per invocation and retries on the next invocation', SETTLES_WITHIN, async () => {
   for (const action of ['refuse', 'ignore']) {
     const number = 192;
@@ -4266,7 +4266,7 @@ test('a closed removal followed by unchanged refusal or injected ignore runs onc
 });
 
 
-// proves R-WORK-41
+// proves R-WORK-56
 test('a refused redo start after closed cleanup releases once without an immediate retry and preserves both actual failures', SETTLES_WITHIN, async () => {
   for (const cleanupFails of [false, true]) {
     const number = 193;
@@ -4307,7 +4307,7 @@ test('a refused redo start after closed cleanup releases once without an immedia
 });
 
 
-// proves R-WORK-41
+// proves R-WORK-56
 test('closed cleanup composes each Owner write rejection with actual cleanup failure and excludes that outer claim until the next invocation', BOUNDS[60_000], async () => {
   for (const column of [COLUMNS.review, COLUMNS.owner]) for (const cleanupFails of [false, true]) for (const rejected of ['postIssueComment', 'moveItem', 'addIssueLabel']) {
     const number = 194;
@@ -4358,7 +4358,7 @@ test('closed cleanup composes each Owner write rejection with actual cleanup fai
 });
 
 
-// proves R-RECORD-9, R-WORK-41
+// proves R-RECORD-9, R-WORK-56
 test('a refused initial closed-cleanup claim record starts neither removal nor its ordinary action and a recordable retry does both', async () => {
   const number = 195;
   const removed = [];
@@ -4387,7 +4387,7 @@ import { join } from 'node:path';
 import { repositoryIn } from './git-repository.mjs';
 import { removeCardDirectories } from '../src/execution/workspace.mjs';
 
-// proves R-WORK-41, R-RECORD-9
+// proves R-WORK-56, R-RECORD-9
 test('an actual closed cleanup names its unrecorded removal while a one-shot refusal permits ordinary dispatch and persistent refusal prevents it', BOUNDS[60_000], async (t) => {
   for (const persistent of [false, true]) {
     const number = 196;
@@ -4507,7 +4507,7 @@ test('another cards held maker does not exclude an eligible closed cleanup when 
 });
 
 
-// proves R-WORK-41
+// proves R-WORK-56
 test('a closed cleanup rechecks claim availability after an independently delayed facts read', BOUNDS[60_000], async (t) => {
   const number = 200;
   const built = world({ cards: [cardIn(number, COLUMNS.owner)], forge: { pullRequests: [{ number: 733, head: `rigger-${number}`, sha: 'd6d079f3258e1b74aad7baf725895b8d74c5b315', closed: true }] } });
@@ -4558,7 +4558,7 @@ test('a closed cleanup rechecks claim availability after an independently delaye
 });
 
 
-// proves R-WORK-41
+// proves R-WORK-56
 test('one closed claim spans delayed removal and every following owner write without duplicate cleanup or early release', BOUNDS[60_000], async (t) => {
   const number = 201;
   const entered = [];
@@ -4606,7 +4606,7 @@ test('one closed claim spans delayed removal and every following owner write wit
 });
 
 
-// proves R-WORK-41, R-WORK-39
+// proves R-WORK-56, R-WORK-39
 test('reopening before closed facts prevents removal while reopening after the selected snapshot restores no removed directory', BOUNDS[60_000], async () => {
   for (const when of ['before', 'after']) {
     const number = 202;
@@ -4646,7 +4646,7 @@ test('reopening before closed facts prevents removal while reopening after the s
 import { clonedFromOrigin } from './git-repository.mjs';
 import { makeWorkspace } from '../src/execution/workspace.mjs';
 
-// proves R-WORK-41, R-WORK-37
+// proves R-WORK-56, R-WORK-37
 test('a new attempt after closed cleanup retains the real directories it creates on later eligible-looking Coding reads after dispatch ends', BOUNDS[60_000], async (t) => {
   const number = 203;
   const { repository } = clonedFromOrigin(temporaryDirectory('rigger-closed-coding-git-'));
@@ -4694,7 +4694,7 @@ test('a new attempt after closed cleanup retains the real directories it creates
 });
 
 
-// proves R-WORK-41, R-WORK-38
+// proves R-WORK-56, R-WORK-38
 test('a failed closed cleanup followed by escalation stays withheld until the owner clears the label before a fresh eligible invocation', async () => {
   const number = 204;
   const fake = boardOf([cardIn(number, COLUMNS.owner)]);
@@ -5996,7 +5996,7 @@ test('a refused maker settlement keeps a changed maker identity eligible and ret
 });
 
 // Each settlement producer retains its own refusal while the next pull omits the same action.
-// proves R-RECORD-9, R-SCHED-6, R-WORK-41
+// proves R-RECORD-9, R-SCHED-6, R-WORK-56
 test('settlement recording refusals retain original causes and omit the selected action across maker judge removal and merge paths', BOUNDS[60_000], async (t) => {
   const cases = [
     ['maker.failed', 'L2', 'maker.failed'], ['maker.withheld', 'L2', 'review.withheld'],
@@ -6122,7 +6122,7 @@ test('settlement recording refusals retain original causes and omit the selected
 });
 
 // Every fresh admission consults invocation memory; asks progressing an admitted judge retain its retry.
-// proves R-SCHED-6, R-RECORD-9, R-WORK-41
+// proves R-SCHED-6, R-RECORD-9, R-WORK-56
 test('judge selection memory covers pull fresh-maker continuing-maker and removal-redo entries in every identity state', { timeout: 120_000 }, async (t) => {
   const { columnChanges } = await import('../src/workflow/transitions.mjs');
   const { makingJudgeDirectories } = await import('./loop-world.mjs');
@@ -6351,7 +6351,7 @@ async function escalatedUnchanged(built, head, before, measure = {}) {
     { category: 'ambiguous', raiser: 'loop', pull: 961, read: head, destination: 'owner', dispatch: maker, reason: unchangedReason(head), reads: measure.reads, elapsedMs: measure.elapsedMs });
 }
 
-// proves R-LOOP-20, R-WORK-43
+// proves R-LOOP-32, R-WORK-58
 test('Table C C1: a continuing maker that exits 0 at the head it was given escalates ambiguous to the owner, and no maker follows', async () => {
   const head = 'a'.repeat(40);
   const { built, card, elapsed } = continuingForge(head, head);
@@ -6365,7 +6365,7 @@ test('Table C C1: a continuing maker that exits 0 at the head it was given escal
   await escalatedUnchanged(built, head, before);
 });
 
-// proves R-LOOP-20
+// proves R-LOOP-32
 test('Table C C2: with rounds remaining the unchanged head escalates at once and spends no round', async () => {
   const head = 'a'.repeat(40);
   const built = world({ ...returnedAt(head, { rounds: 3 }), clock: { now: () => 0, pause: async () => assert.fail('the first read showed the head') } });
@@ -6379,7 +6379,7 @@ test('Table C C2: with rounds remaining the unchanged head escalates at once and
   await escalatedUnchanged(built, head, before);
 });
 
-// proves R-LOOP-20
+// proves R-LOOP-32
 test('Table C C3: in a kept-up run later pulls dispatch nothing for the escalated card', async () => {
   const head = 'a'.repeat(40);
   const clock = manualClock();
@@ -6404,7 +6404,7 @@ test('Table C C3: in a kept-up run later pulls dispatch nothing for the escalate
   }
 });
 
-// proves R-LOOP-20
+// proves R-LOOP-32
 test('Table C C4: after a no-clock run the escalation label holds the next invocation back', SETTLES_WITHIN, async (t) => {
   const head = 'a'.repeat(40);
   const built = onManualHost(t, { ...returnedAt(head), concurrency: 1, fresh: false });
@@ -6420,7 +6420,7 @@ test('Table C C4: after a no-clock run the escalation label holds the next invoc
   await escalatedUnchanged(built, head, before);
 });
 
-// proves R-LOOP-20
+// proves R-LOOP-32
 test('Table C C1: an unchanged head the forge shows only on a later read records that head, the reads and the wait', async () => {
   const head = 'a'.repeat(40);
   const other = 'd'.repeat(40);
@@ -6437,7 +6437,7 @@ test('Table C C1: an unchanged head the forge shows only on a later read records
   await escalatedUnchanged(built, head, before, { reads: 2, elapsedMs: 5000 });
 });
 
-// proves R-WORK-43
+// proves R-WORK-58
 test('Table C C5: a continuing maker that exits 0 at a new head moves to review at it and escalates nothing', async () => {
   const old = 'a'.repeat(40);
   const tip = 'b'.repeat(40);
@@ -6459,7 +6459,7 @@ test('Table C C5: a continuing maker that exits 0 at a new head moves to review 
   assert.ok(built.agent.runs().some(({ role }) => role === 'reviewer'), 'the judge ran');
 });
 
-// proves R-LOOP-20
+// proves R-LOOP-32
 test('Table C C6: a continuing maker’s own note at the head it was given wins over the unchanged head', async () => {
   const head = 'a'.repeat(40);
   const { built, card } = continuingForge(head, head);
@@ -6479,7 +6479,7 @@ test('Table C C6: a continuing maker’s own note at the head it was given wins 
   assert.equal(issue.at(-1), `Rigger escalates card #96 to the owner (critical).\n\nA required condition failed.\n\nAcceptance item: 1\nPull request: #961\nHead: ${head}\nLine of work: rigger-96\n`);
 });
 
-// proves R-WORK-43
+// proves R-WORK-58
 test('Table C C7: an unreadable tip is withheld, however the given head stands, and escalates nothing', async () => {
   const head = 'a'.repeat(40);
   const { built, card } = continuingForge(head, head, undefined, async () => { throw new Error('the branch has no commit'); });
@@ -6493,7 +6493,7 @@ test('Table C C7: an unreadable tip is withheld, however the given head stands, 
   assert.match(withheld.reason, /card #96.*branch has no commit/);
 });
 
-// proves R-WORK-43
+// proves R-WORK-58
 test('Table C C8: a tip at the given head that the forge never shows runs the existing reads and escalates nothing', async () => {
   const head = 'a'.repeat(40);
   const other = 'd'.repeat(40);
@@ -6513,7 +6513,7 @@ test('Table C C8: a tip at the given head that the forge never shows runs the ex
   assert.equal(withheld.reason, `card #96's maker exited 0 at head ${head}, but the forge last showed pull request #961 at head ${other}`);
 });
 
-// proves R-LOOP-20
+// proves R-LOOP-32
 test('Table C C9: a continuing maker that exits non-zero at the head it was given stays in coding and escalates nothing', async () => {
   const head = 'a'.repeat(40);
   const built = world({ ...returnedAt(head), fresh: false, answer: () => ({ exit: 7, output: '' }), clock: { now: () => 0, pause: async () => assert.fail('a failed maker reads no forge head') } });
@@ -6533,7 +6533,7 @@ test('Table C C9: a continuing maker that exits non-zero at the head it was give
   assert.equal(built.events().some(({ layer, event, cause }) => layer === 'L2' && event === 'transition' && cause === 'returned'), false);
 });
 
-// proves R-LOOP-20
+// proves R-LOOP-32
 test('Table C C10: a fresh maker that exits 0 moves to review and escalates nothing', async () => {
   const built = world({ cards: [readyCard(96)], clock: { now: () => 0, pause: async () => assert.fail('a fresh maker waits for no head') } });
   const before = await heldOf(built, 96);
@@ -6545,7 +6545,7 @@ test('Table C C10: a fresh maker that exits 0 moves to review and escalates noth
   assert.ok(built.events().some(({ layer, event, cause }) => layer === 'L2' && event === 'transition' && cause === 'returned'), 'moved to review');
 });
 
-// proves R-WORK-43
+// proves R-WORK-58
 test('Table C C12: a pull request gone at the unchanged head stays in coding under the existing read, and escalates nothing', async () => {
   const head = 'a'.repeat(40);
   const { built, card, pull } = continuingForge(head, head, undefined, async () => {
@@ -6561,7 +6561,7 @@ test('Table C C12: a pull request gone at the unchanged head stays in coding und
   assert.match(built.events().find(({ event }) => event === 'review.withheld').reason, /no open pull request/);
 });
 
-// proves R-WORK-43
+// proves R-WORK-58
 test('Table C C12: a forge read that fails at the unchanged head stays in coding, and escalates nothing', async () => {
   const head = 'a'.repeat(40);
   const { built, card } = continuingForge(head, head, undefined, async () => {
@@ -6577,7 +6577,7 @@ test('Table C C12: a forge read that fails at the unchanged head stays in coding
   assert.match(built.events().find(({ event }) => event === 'review.withheld').reason, /HTTP 502/);
 });
 
-// proves R-LOOP-20
+// proves R-LOOP-32
 test('Table C C12: a refused escalation comment at the unchanged head fails the run, naming it, and no second maker runs', SETTLES_WITHIN, async (t) => {
   const head = 'a'.repeat(40);
   const built = onManualHost(t, { ...returnedAt(head), concurrency: 1, fresh: false });

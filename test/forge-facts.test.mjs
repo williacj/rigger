@@ -117,7 +117,7 @@ const soundFrom = (number, pull) => {
   return { ...opened, diff: DIFF, mergeBase: BASE, mergeable: 'unknown', comments: [{ body: marker, createdAt: '2026-10-01T11:00:00Z' }] };
 };
 
-// proves R-WORK-19
+// proves R-WORK-55
 test('given a Ready card whose line of work the forge holds, L2 escalates the card, naming it and its line of work', async () => {
   const [next] = await decided([cardIn(1, columns.ready)], readsOver({ branches: ['rigger-1'] }).reads);
 
@@ -126,7 +126,7 @@ test('given a Ready card whose line of work the forge holds, L2 escalates the ca
   assert.match(next.reason, /\brigger-1\b/);
 });
 
-// proves R-WORK-19
+// proves R-WORK-55
 test('given a Coding card whose line of work the forge holds, L2 escalates the card, naming it and its line of work', async () => {
   const [next] = await decided([cardIn(2, columns.coding)], readsOver({ branches: ['rigger-2'] }).reads);
 
@@ -135,7 +135,7 @@ test('given a Coding card whose line of work the forge holds, L2 escalates the c
   assert.match(next.reason, /\brigger-2\b/);
 });
 
-// proves R-WORK-19
+// proves R-WORK-55
 test('given a Ready or Coding card with a merged pull request from its line of work, L2 escalates the card, naming it and the pull request, and answers Done for a Review card', async () => {
   for (const column of [columns.ready, columns.coding]) {
     const [next] = await decided([cardIn(3, column)], readsOver({ pullRequests: [pullFrom(3, 31, true)] }).reads);
@@ -148,7 +148,7 @@ test('given a Ready or Coding card with a merged pull request from its line of w
   assert.deepEqual(review, { action: 'move', to: 'done' });
 });
 
-// proves R-WORK-19
+// proves R-WORK-55
 test('given a Ready card with a merged pull request from its line of work and the branch deleted, L2 escalates the card, naming the pull request', async () => {
   const repository = readsOver({ pullRequests: [pullFrom(4, 41, true)] });
   assert.deepEqual(await repository.reads.readBranches(['rigger-4']), { 'rigger-4': false }, 'the branch is not on the forge');
@@ -159,7 +159,7 @@ test('given a Ready card with a merged pull request from its line of work and th
   assert.match(next.reason, /#41\b/);
 });
 
-// proves R-WORK-19
+// proves R-WORK-55
 test('given a Review card with two open pull requests from its line of work, L2 escalates the card, naming it and each pull request', async () => {
   const [next] = await decided([cardIn(5, columns.review)], readsOver({ pullRequests: [pullFrom(5, 51), pullFrom(5, 52)] }).reads);
 
@@ -169,7 +169,7 @@ test('given a Review card with two open pull requests from its line of work, L2 
   assert.match(next.reason, /#52\b/);
 });
 
-// proves R-WORK-19
+// proves R-WORK-55
 test('given a Review card with no open or merged pull request and its line of work on the forge, L2 escalates the card, naming it and its line of work', async () => {
   const [next] = await decided([cardIn(6, columns.review)], readsOver({ branches: ['rigger-6'] }).reads);
 
@@ -212,7 +212,7 @@ test('given a card no kind selects, L2 ignores it whatever the forge holds, and 
   assert.deepEqual(next, { action: 'ignore' });
 });
 
-// proves R-LOOP-13, R-WORK-19
+// proves R-LOOP-13, R-WORK-55
 test('given a Ready card whose line of work the forge holds and whose labels select two tiers for its maker role, L2\'s one refusal names the role, both labels and its line of work', async () => {
   const roles = { ...config.roles, engineer: { ...config.roles.engineer, labels: { 'tier:high': 'high', 'tier:low': 'standard' } } };
   const conflicted = { ...cardIn(14, columns.ready), labels: ['type:change', 'tier:high', 'tier:low'] };
@@ -225,7 +225,7 @@ test('given a Ready card whose line of work the forge holds and whose labels sel
   for (const named of [/\bengineer\b/, /tier:high/, /tier:low/, /\brigger-14\b/]) assert.match(next.reason, named);
 });
 
-// proves R-LOOP-13, R-WORK-19
+// proves R-LOOP-13, R-WORK-55
 test('given a Ready card whose line of work the forge holds, whose acceptance the form check refuses, and whose labels select two tiers for its maker role, L2\'s one refusal names the role, both labels, its line of work and the form check\'s reason', async () => {
   const roles = { ...config.roles, engineer: { ...config.roles.engineer, labels: { 'tier:high': 'high', 'tier:low': 'standard' } } };
   const everything = { ...cardIn(15, columns.ready), body: '## Notes\n\nNo acceptance here.\n', labels: ['type:change', 'tier:high', 'tier:low'] };

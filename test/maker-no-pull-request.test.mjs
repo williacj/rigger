@@ -368,7 +368,7 @@ test('where the escalation\'s comment is refused, the verb\'s hand-over line for
   assert.doesNotMatch(answer.text, /acceptance item/);
 });
 
-// proves R-LOOP-20
+// proves R-LOOP-32
 test('the verb\'s hand-over line for an R-LOOP-20 escalation names Rigger as raising it, its category and its reason, and no acceptance item', async (t) => {
   const { world, head } = continuingWorld(t);
 

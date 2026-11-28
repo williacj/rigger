@@ -213,7 +213,7 @@ const busy = (run, count) => positive(() => run.handed.length >= count);
 
 // R-SCHED-43 rows S1 and S3: a read begun before the setting aside keeps the skip whatever it
 // shows, and the first read begun after that finds the card in Ready claims it.
-// proves R-SCHED-43
+// proves R-SCHED-63
 test('S1 S3: a read begun before the setting aside keeps the skip, and a later read finding Ready ends it', async (t) => {
   const workspaces = { 12: gate(), 13: gate() };
   const here = world(t, { cards: [12, 13], concurrency: 2, script: async (number, claim) => (claim === 1 ? workspaces[number].promise : 'refused') });
@@ -241,7 +241,7 @@ test('S1 S3: a read begun before the setting aside keeps the skip, and a later r
 
 // R-SCHED-43 rows S2, S3, S6 and S7: each poll begun after the setting aside compares the card's
 // column with its compared column, and a skip that ends starts the card's entry afresh.
-// proves R-SCHED-43
+// proves R-SCHED-63
 test('S2 S3 S6 S7: polls keep the skip in the compared column, end it in Ready, and start a later skip afresh', async (t) => {
   const here = world(t);
   const run = here.start();
@@ -267,7 +267,7 @@ test('S2 S3 S6 S7: polls keep the skip in the compared column, end it in Ready, 
 
 // R-SCHED-43 row S4: a read finding the card in a column other than Ready and its compared column
 // ends the skip, and the pull answers the card as it answers any card in that column.
-// proves R-SCHED-43
+// proves R-SCHED-63
 test('S4: a poll finding the card in Owner ends the skip, and the pull answers it as an Owner card', async (t) => {
   const here = world(t);
   const run = here.start();
@@ -282,7 +282,7 @@ test('S4: a poll finding the card in Owner ends the skip, and the pull answers i
 
 // R-SCHED-43 rows S5 and S2: a change the board refused leaves the compared column, Ready here,
 // so every later read finding Ready keeps the skip.
-// proves R-SCHED-43
+// proves R-SCHED-63
 test('S5 S2: a refused escalation move leaves the compared column at Ready, and the skip holds there', async (t) => {
   const here = world(t, { branches: ['rigger-12'], refuseMove: (column) => column === COLUMNS.owner });
   const run = here.start();
@@ -295,7 +295,7 @@ test('S5 S2: a refused escalation move leaves the compared column at Ready, and 
 
 // R-SCHED-43 rows S5 and S8: a move the board accepted moves the compared column, though a later
 // write of the same change failed; a refused move the board made anyway is seen at the next read.
-// proves R-SCHED-43
+// proves R-SCHED-63
 test('S5 S8: an accepted move sets the compared column, and a refused move made anyway ends the skip', async (t) => {
   for (const cell of ['accepted', 'made-anyway']) {
     await t.test(cell, async (t) => {
@@ -318,7 +318,7 @@ test('S5 S8: an accepted move sets the compared column, and a refused move made 
 // after it showing Done; and a poll begun after that. The first read keeps the skip under S1 and
 // changes no compared column, so the poll, finding the card in Done, the refused move's target,
 // ends the skip. A merge claim's end begins no read of its own, so card 13's stop begins the first.
-// proves R-SCHED-43
+// proves R-SCHED-63
 test('S8′: a read begun before the setting aside changes no compared column, so the next read ends the skip at a refused move made anyway', async (t) => {
   const done = gate();
   const workspace = gate();
@@ -351,7 +351,7 @@ test('S8′: a read begun before the setting aside changes no compared column, s
 });
 
 // R-LOOP-19 row S6a: a failed maker's card the board shows moved to Ready has its maker dispatched again.
-// proves R-LOOP-19, R-SCHED-43
+// proves R-LOOP-19, R-SCHED-63
 test('S6a: a failed maker set aside and moved back to Ready is dispatched again in the same run', async (t) => {
   const here = world(t, { script: () => 'maker' });
   const run = here.start();
@@ -369,7 +369,7 @@ test('S6a: a failed maker set aside and moved back to Ready is dispatched again 
 // finding it in a column other than Ready ends the skip, the pull answering it as any card there:
 // an Owner card holding nothing is escalated, and a Review card holding nothing is done again from
 // the beginning (`R-WORK-24`).
-// proves R-LOOP-19, R-SCHED-43
+// proves R-LOOP-19, R-SCHED-63
 test('S6b S6c: a failed maker stays skipped in Coding, and a read finding it elsewhere answers it as any card there', async (t) => {
   const cells = {
     [COLUMNS.coding]: { pulls: 1, makers: 1, escalated: false },
@@ -393,7 +393,7 @@ test('S6b S6c: a failed maker stays skipped in Coding, and a read finding it els
 
 // R-FAIL-8's row for a line of work moved or deleted, rows S8a and S8b: a workspace rejecting the
 // code on every attempt has the card claimed exactly twice, then set aside, in either run.
-// proves R-FAIL-8, R-SCHED-43
+// proves R-FAIL-8, R-SCHED-63
 test('S8a S8b: a line-moved or line-deleted stop is claimed again once, then set aside', async (t) => {
   for (const code of ['moved', 'deleted']) {
     for (const clockHeld of [true, false]) {
@@ -415,7 +415,7 @@ test('S8a S8b: a line-moved or line-deleted stop is claimed again once, then set
 
 // R-SCHED-43 row S8c: the line-moved count starts with the invocation and again at each skip's
 // end, whatever set the card aside, across repeated person moves.
-// proves R-FAIL-8, R-SCHED-43
+// proves R-FAIL-8, R-SCHED-63
 test('S8c: each skip a person ends makes the next line-moved stop a first', async (t) => {
   const cells = {
     'set aside by a refused branch': ['moved', 'refused', 'moved', 'moved', 'moved', 'moved'],
@@ -457,7 +457,7 @@ test('S8c: each skip a person ends makes the next line-moved stop a first', asyn
 // first comparison ended card 12's skip waits in L2's facts call, while another pull ends the same
 // skip, claims the card and counts its first line stop. The waiting read's `done` must not reset
 // that count, so the card's second line stop sets it aside: claimed exactly twice after its skip.
-// proves R-SCHED-43
+// proves R-SCHED-63
 test('S8b S8c: a pull whose read ended a skip another pull already ended resets no line-stop count taken since', async (t) => {
   const g13 = gate();
   const g14 = gate();
@@ -485,7 +485,7 @@ test('S8b S8c: a pull whose read ended a skip another pull already ended resets 
 });
 // R-SCHED-43 row S9: with no clock trigger declared, a set-aside card stays skipped for the run's
 // life, though a read after the setting aside finds it in Ready.
-// proves R-SCHED-43
+// proves R-SCHED-63
 test('S9: a run with no clock trigger keeps a set-aside card skipped though the board shows it moved', async (t) => {
   for (const clockHeld of [false, true]) {
     await t.test(clockHeld ? 'clock-held' : 'no clock', async (t) => {
@@ -504,7 +504,7 @@ test('S9: a run with no clock trigger keeps a set-aside card skipped though the 
 });
 
 // R-SCHED-43 row S10: a new run on the same loop starts with no card set aside.
-// proves R-SCHED-43
+// proves R-SCHED-63
 test('S10: a second run on the same loop claims the card the first set aside', async (t) => {
   const here = world(t);
   const first = here.start();
@@ -693,7 +693,7 @@ async function ownerSound(here) {
 // leaves it where it was. The test watches L3 hand the card to L2's facts call, which a skipped card
 // never is, so neither L2's escalation label nor its no-action answer can mask the compared column.
 // A label's removal ends no skip, and a person's move to any other column ends it.
-// proves R-SCHED-43
+// proves R-SCHED-63
 test('S5 table: every column the board accepted is the compared column, however the step ended', async (t) => {
   for (const [step, { from, target, cause, outcomes, labelled: escalation = false, kept = true, handed = 1, options, setup }] of Object.entries(COLUMN_STEPS)) {
     for (const end of outcomes) {
@@ -762,7 +762,7 @@ const LINE_CLAIMS = {
 // R-FAIL-8's row for a line of work moved or deleted, rows S8a to S8c, for every kind of claim that
 // makes a workspace: the first stop re-reads the forge, the second sets the card aside, and a
 // person's move that ends the skip starts the count again.
-// proves R-FAIL-8, R-SCHED-43
+// proves R-FAIL-8, R-SCHED-63
 test('S8a S8b S8c table: every claim that makes a workspace is re-read once at a line stop, and counts again after its skip', async (t) => {
   for (const [claim, { setup, judges, cause, restart, reclaimed = true }] of Object.entries(LINE_CLAIMS)) {
     for (const code of ['moved', 'deleted']) {
@@ -1099,7 +1099,7 @@ function recoveryWorld(t, { madeMove = () => false, refuseMove = () => false, re
 // that this run already set aside. The column the board accepted is the compared column, whether
 // the move answered or rejected after the board took it, and the pull stays independent of the
 // firing. A move the board refused leaves the compared column where the claim left it.
-// proves R-SCHED-43
+// proves R-SCHED-63
 test('S5 recovery: a card this run set aside keeps the column recovery placed it in as its compared column', async (t) => {
   const created = (event, fields) => event === 'transition' && fields.cause === 'created';
   const ends = {
@@ -1145,7 +1145,7 @@ const CREATED_ACCEPTED = {
 // R-SCHED-43 row S5 while a claim is still working the card: recovery's `created` move, accepted
 // before the claim sets the card aside, is the compared column it is set aside with (the reviewer
 // 1192#6592601382 and the architect 1192#6592472670, round 5). The claim keeps no column of its own.
-// proves R-SCHED-43
+// proves R-SCHED-63
 test('S5 recovery during a claim: a move recovery made while the claim worked is the compared column it is set aside with', async (t) => {
   for (const [end, options] of Object.entries(CREATED_ACCEPTED)) {
     await t.test(end, async (t) => {
@@ -1172,7 +1172,7 @@ test('S5 recovery during a claim: a move recovery made while the claim worked is
 // answered, a person puts it in Ready, a pull claims it and sets it aside, and creation's delayed
 // `created` move to Ready then lands (the architect 1192#6592472670, round 5). That move is the
 // compared column, whether creation runs in recovery of a pending firing or in a firing of its own.
-// proves R-SCHED-43
+// proves R-SCHED-63
 test('S5 creation: a card set aside before the delayed created move of its creation keeps the column of that move', async (t) => {
   for (const create of ['recovery', 'firing']) {
     for (const [end, options] of Object.entries(CREATED_ACCEPTED)) {
@@ -1257,7 +1257,7 @@ async function setAsideAtS5a(t, options, holdRelease = false) {
 // R-SCHED-43 row S5a1, the judge's B1 probe (the reviewer 1192#6594679358), unchanged: the claim
 // takes Coding, the column its read showed, and Ready, the `created` move accepted while that read
 // was in flight, so reads finding Ready keep the skip.
-// proves R-SCHED-43
+// proves R-SCHED-63
 test('S5a1: a card claimed from a stale read keeps the column creation placed it in while that read was in flight', async (t) => {
   for (const [end, options] of Object.entries(CREATED_ACCEPTED)) {
     await t.test(end, async (t) => {
@@ -1284,7 +1284,7 @@ test('S5a1: a card claimed from a stale read keeps the column creation placed it
 // R-SCHED-43 row S5a2, the attacker's probe B (round 6), unchanged: this run's `created` move lands
 // once the claiming read has begun, a person then moves the card to Coding, which the read shows,
 // and the claim sets it aside. Reads finding Coding keep the skip.
-// proves R-SCHED-43
+// proves R-SCHED-63
 test('S5a2: a person move the claiming read saw is not taken as a second move once the card is set aside', async (t) => {
   for (const [end, options] of Object.entries(CREATED_ACCEPTED)) {
     await t.test(end, async (t) => {
@@ -1309,7 +1309,7 @@ test('S5a2: a person move the claiming read saw is not taken as a second move on
 
 // R-SCHED-43 row S5a3: after B1's interleaving, a person moves the card to Review before the next
 // read, which finds it outside both its compared columns and ends the skip.
-// proves R-SCHED-43
+// proves R-SCHED-63
 test('S5a3: a card set aside with two compared columns ends its skip at a read finding it in a third', async (t) => {
   for (const [end, options] of Object.entries(CREATED_ACCEPTED)) {
     await t.test(end, async (t) => {
@@ -1337,7 +1337,7 @@ async function landDuringRead(here, person) {
 // is accepted while a read begun after the setting aside is in flight, and the read shows Ready.
 // The skip holds, and the change, not the read, makes Ready the compared column: a later person's
 // move to Coding ends the skip.
-// proves R-SCHED-43
+// proves R-SCHED-63
 test('S5b: a read showing the target of a run change accepted while it was in flight keeps the skip', async (t) => {
   for (const [end, options] of Object.entries(CREATED_ACCEPTED)) {
     await t.test(end, async (t) => {
@@ -1355,7 +1355,7 @@ test('S5b: a read showing the target of a run change accepted while it was in fl
 // R-SCHED-43 row S5b′, the attacker's probe A (round 6), unchanged: the read begun after the
 // setting aside shows Coding, the compared column as it began, while this run's `created` move into
 // Ready lands. The skip holds, and the next reads, finding Ready, keep it.
-// proves R-SCHED-43
+// proves R-SCHED-63
 test('S5b′: a read whose snapshot predates the run\'s own accepted move does not end the skip', async (t) => {
   for (const [end, options] of Object.entries(CREATED_ACCEPTED)) {
     await t.test(end, async (t) => {
@@ -1386,7 +1386,7 @@ test('S5b′: a read whose snapshot predates the run\'s own accepted move does n
 
 // R-SCHED-43 row S5c: as S5b, a person having moved the card to Review, which the read shows. Review
 // is neither the compared column as the read began nor the change's target, so the skip ends.
-// proves R-SCHED-43
+// proves R-SCHED-63
 test('S5c: a read showing a column neither its compared column nor a run change\'s target ends the skip', async (t) => {
   for (const [end, options] of Object.entries(CREATED_ACCEPTED)) {
     await t.test(end, async (t) => {
@@ -1401,7 +1401,7 @@ test('S5c: a read showing a column neither its compared column nor a run change\
 // R-SCHED-43 row S5d, the collapse: after B1's interleaving, the first read with no change in
 // flight finds Ready, keeps the skip, and makes Ready the one compared column, so a later read
 // finding Coding ends it.
-// proves R-SCHED-43
+// proves R-SCHED-63
 test('S5d: a read with no change in flight makes the column it shows the one compared column', async (t) => {
   for (const [end, options] of Object.entries(CREATED_ACCEPTED)) {
     await t.test(end, async (t) => {
@@ -1420,7 +1420,7 @@ test('S5d: a read with no change in flight makes the column it shows the one com
 // from Ready to Coding before any read with no change in flight. The next read finds Coding, a
 // compared column, keeps the skip and makes Coding the one compared column, so a later read finding
 // Ready ends it.
-// proves R-SCHED-43
+// proves R-SCHED-63
 test('S5e: a person move into a compared column before the collapse goes unseen', async (t) => {
   for (const [end, options] of Object.entries(CREATED_ACCEPTED)) {
     await t.test(end, async (t) => {
@@ -1445,7 +1445,7 @@ test('S5e: a person move into a compared column before the collapse goes unseen'
 // unclaimed card in Coding, and this run's `created` move into Ready lands while the pull awaits
 // L2's facts call. The pull claims the card from Coding, its compared columns Coding and Ready, so
 // once it is set aside, reads finding Ready keep the skip.
-// proves R-SCHED-43
+// proves R-SCHED-63
 test('S5f: a run change accepted while the pull awaits the facts call is a compared column of the card it claims', async (t) => {
   for (const [end, options] of Object.entries(CREATED_ACCEPTED)) {
     await t.test(end, async (t) => {
@@ -1473,7 +1473,7 @@ test('S5f: a run change accepted while the pull awaits the facts call is a compa
 // column, Coding. A pull's read answers showing Coding, and this run's `created` move into Ready
 // lands before that pull compares again, after L2's facts call. The read keeps the skip and leaves
 // Ready, the change's target, the one compared column, so later reads finding Ready keep it too.
-// proves R-SCHED-43
+// proves R-SCHED-63
 test('S5g: a run change accepted after a read answers and before its pull compares counts for that read', async (t) => {
   for (const [end, options] of Object.entries(CREATED_ACCEPTED)) {
     await t.test(end, async (t) => {
@@ -1499,7 +1499,7 @@ test('S5g: a run change accepted after a read answers and before its pull compar
 // Ready, and this run's `created` move into Ready is accepted while the pull awaits L2's facts call,
 // before it claims. The read is in flight until its pull has compared and claimed, so Ready counts
 // for it, the skip holds, and the card is claimed once.
-// proves R-SCHED-43
+// proves R-SCHED-63
 test('S5g′: a run change accepted after the pull first compares and before it claims keeps a skip that comparison would end', async (t) => {
   for (const [end, options] of Object.entries(CREATED_ACCEPTED)) {
     await t.test(end, async (t) => {
@@ -1523,7 +1523,7 @@ test('S5g′: a run change accepted after the pull first compares and before it 
 // R-SCHED-43 row S5h, the attacker's P3 probe on round 7, unchanged (the architect's ruling
 // 1178#6606219866): at concurrency 2, two reads in flight at once, and the older one's collapse
 // landing after the newer one's. Only the latest-begun collapsing read writes the compared columns.
-// proves R-SCHED-43
+// proves R-SCHED-63
 test('S5h: an older read collapsing after a newer one does not end the skip at the column the newer read saw', async (t) => {
   const here = recoveryWorld(t, { other: true, holdCard: 13 });
   // A person puts card 12 in Coding before the first read snapshots it.
@@ -1564,7 +1564,7 @@ test('S5h: an older read collapsing after a newer one does not end the skip at t
 // R-SCHED-43 row S5g where the pull fails before its last comparison (the round-7 attacker's P4):
 // as S5g′, but L2's facts call fails after this run's `created` move into Ready lands. The read was
 // in flight until `done`, so Ready, a change it overlapped, still keeps the skip.
-// proves R-SCHED-43
+// proves R-SCHED-63
 test('S5g″: a run change accepted while a pull whose facts call fails is in flight keeps the skip', async (t) => {
   for (const [end, options] of Object.entries(CREATED_ACCEPTED)) {
     await t.test(end, async (t) => {
@@ -1585,7 +1585,7 @@ test('S5g″: a run change accepted while a pull whose facts call fails is in fl
 // R-SCHED-43 row S6f, the attacker's P3 on round 7's merge, unchanged: a card removed from the board
 // shows no column, which is no column other than the one Rigger last knew, so the skip holds, and the
 // compared columns stay, so a read finding the card back in Coding holds it too.
-// proves R-SCHED-43
+// proves R-SCHED-63
 test('S6f: a read finding the card in no column ends no skip, since no column is no column other than the one Rigger last knew', async (t) => {
   const here = recoveryWorld(t);
   await positive(() => here.waiting() && here.handed.some((answer) => answer.settled));
@@ -1601,7 +1601,7 @@ test('S6f: a read finding the card in no column ends no skip, since no column is
 // R-SCHED-43 rows S3 and S4 against the compared column (the ruling's row 5): a read that overlapped
 // no run-owned change ends the skip at any column but the compared one, the column a run change moved the
 // card away from included.
-// proves R-SCHED-43
+// proves R-SCHED-63
 test('S5 record: a read overlapping no run change ends the skip at the column the run moved the card away from', async (t) => {
   for (const [end, options] of Object.entries(CREATED_ACCEPTED)) {
     await t.test(end, async (t) => {
@@ -1620,7 +1620,7 @@ test('S5 record: a read overlapping no run change ends the skip at the column th
 // R-SCHED-43 row S1 with a run change in flight (the ruling's row 6): a read begun before the
 // setting aside never ends the skip, though a run change landed while it was in flight and it
 // shows a column a person moved the card to, other than any the run set.
-// proves R-SCHED-43
+// proves R-SCHED-63
 test('S1 with a change in flight: a read begun before the setting aside keeps the skip whatever it shows', async (t) => {
   for (const [end, options] of Object.entries(CREATED_ACCEPTED)) {
     await t.test(end, async (t) => {

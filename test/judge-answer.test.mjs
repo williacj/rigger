@@ -113,7 +113,7 @@ const named = (next) => (next.judges ?? []).map((judge) => judge.role);
 const judge = (next, role) => next.judges.find((each) => each.role === role);
 
 // Each independently changed governing fact must select new judge work without unrelated facts doing so.
-// proves R-VERDICT-5, R-LOOP-8
+// proves R-VERDICT-5, R-LOOP-31
 test('a judge identity distinguishes its governing comment head acceptance provider and tier independently', () => {
   const governing = { ...verdict(HEAD, 'reviewer'), edited: true, id: 'IC_41' };
   const first = judge(answer(card({ comments: [governing] })), 'reviewer');
@@ -800,7 +800,7 @@ test('given one agent judge with no marker and the others sound, L2 dispatches t
   assert.deepEqual(named(next), ['engineer']);
 });
 
-// proves R-LOOP-8
+// proves R-LOOP-31
 test('given one agent judge\'s governing marker unreadable (m3), without its coverage line (m7), or edited (m11), the others sound, L2 dispatches that judge only and spends no round, a row each', () => {
   const variants = {
     m3: unreadableOf('engineer', 'm3'),
@@ -905,7 +905,7 @@ test('given a kind with no rounds declared, the bound is three: two rounds with 
   assert.deepEqual(loopAnswer(loopCard({ comments: [one, two, ...revisingNow()] })), { action: 'escalate', category: 'ambiguous', raiser: 'loop', destination: 'owner', pull: 70, head: HEAD, reason: '3 of 3 rounds spent.\nengineer (needs revision): Print the help on stderr.' });
 });
 
-// proves R-LOOP-8
+// proves R-LOOP-31
 test('L2 counts rounds as distinct head and digest pairs: two markers at one earlier pair count one round', () => {
   const pair = [movedTo(markerOf({ role: 'reviewer', ...RULING.m9 }), { head: EARLIER, at: 1 }), movedTo(markerOf({ role: 'engineer' }), { head: EARLIER, at: 2 })];
 
@@ -913,21 +913,21 @@ test('L2 counts rounds as distinct head and digest pairs: two markers at one ear
   assert.equal(loopAnswer(loopCard({ comments: [...pair, ...revisingNow()] })).action, 'continue');
 });
 
-// proves R-LOOP-8
+// proves R-LOOP-31
 test('a change of the acceptance digest at one head counts a second round', () => {
   const earlier = movedTo(markerOf({ role: 'reviewer', ...RULING.m9 }), { digest: OTHER_DIGEST, at: 1 });
 
   assert.deepEqual(loopAnswer(loopCard({ label: 'type:bounded', comments: [earlier, ...revisingNow()] })), { action: 'escalate', category: 'ambiguous', raiser: 'loop', destination: 'owner', pull: 70, head: HEAD, reason: '2 of 2 rounds spent.\nengineer (needs revision): Print the help on stderr.' });
 });
 
-// proves R-LOOP-8
+// proves R-LOOP-31
 test('a new head counts a new round, whether or not the pull request still holds the earlier head', () => {
   const earlier = movedTo(markerOf({ role: 'architect' }), { head: EARLIER, at: 1 });
 
   assert.deepEqual(loopAnswer(loopCard({ label: 'type:bounded', comments: [earlier, ...revisingNow()] })), { action: 'escalate', category: 'ambiguous', raiser: 'loop', destination: 'owner', pull: 70, head: HEAD, reason: '2 of 2 rounds spent.\nengineer (needs revision): Print the help on stderr.' });
 });
 
-// proves R-LOOP-8
+// proves R-LOOP-31
 test('under a bound of two rounds, an earlier pair holding only an unreadable marker, only an edited one, only a role the kind does not name, or only the owner\'s counts no round, a row each', () => {
   const pairs = {
     m3: movedTo(unreadableOf('reviewer', 'm3'), { head: EARLIER, at: 1 }),
@@ -988,7 +988,7 @@ test('given one agent judge ruling coverage insufficient and another needing rev
   assert.equal(returning(['m9', 'm1']).action, 'return');
 });
 
-// proves R-LOOP-8
+// proves R-LOOP-31
 test('given a coverage ruled insufficient and then a change to the acceptance digest, L2 dispatches every agent judge again', () => {
   const comments = markersFor(['m1', 'm8', 'm1']);
   const edited = { ...loopCard({ comments }), body: BODY.replace('exits 0', 'exits 1') };
@@ -1087,7 +1087,7 @@ test('given every agent judge and the owner sound, L2 answers ignore for an Owne
   assert.match(failing.reason, /\bci\b.*failed/);
 });
 
-// proves R-WORK-19
+// proves R-WORK-55
 test('given an Owner card the forge holds no open or merged pull request for, more than one open, or its line of work alone, L2 escalates it naming what the forge holds, a row each', () => {
   const rows = [
     { facts: { open: [], branch: false }, names: /no pull request.*rigger-7/ },
@@ -1116,7 +1116,7 @@ test('given a Coding card with every agent judge sound and the forge reading its
   assert.deepEqual(loopAnswer(codingCard(allSound(), { mergeable: 'conflicting' })), { action: 'continue', pull: 70, head: HEAD, markers: [], comments: ['IC_1', 'IC_2', 'IC_3'] });
 });
 
-// proves R-WORK-19
+// proves R-WORK-55
 test('given a Coding card with one open pull request and no marker, every agent sound with the pull request mergeable, coverage ruled insufficient, or a critical marker, L2 refuses it as at the base, naming its line of work, a row each', () => {
   const rows = { none: [], m1: allSound(), m8: markersFor(['m1', 'm8', 'm1']), m10: markersFor(['m1', 'm10', 'm1']) };
   for (const [state, comments] of Object.entries(rows)) {
@@ -1248,7 +1248,7 @@ test('given a failed read of the merge base, which only a judge\'s evidence need
   assert.deepEqual(loopAnswer(ownerCard([ownerMarker()], failed)), { action: 'merge', pull: 70, head: HEAD, ...mergeEvidence([...AGENTS, 'owner']) });
 });
 
-// proves R-LOOP-8, R-LOOP-9
+// proves R-LOOP-31, R-LOOP-9
 test('a marker valid against an earlier acceptance with an item fewer or an item more still spends its round, under a bound of two and under the default of three', () => {
   const earlierWith = (items, digest, at, head = HEAD) => movedTo(markerOf({ role: 'reviewer', items, ...RULING.m9 }), { head, digest, at });
   const added = earlierWith(['met'], OTHER_DIGEST, 1);
@@ -1312,7 +1312,7 @@ test('given every agent judge and the owner sound and a required check pending o
   }
 });
 
-// proves R-LOOP-8, R-LOOP-9
+// proves R-LOOP-31, R-LOOP-9
 test('an earlier marker whose comment holds item-like prose after its closed block still spends its round: at a changed digest, at a changed head, two at one pair counting one, under a bound of two and under the default of three', () => {
   const prose = (written) => ({ ...written, body: `${written.body}\nitem 1: ordinary text a person wrote after the block\nitem 9: more of it\n` });
   const earlier = (at, moved, ruling = RULING.m9) => prose(movedTo(markerOf({ role: 'reviewer', ...ruling }), { ...moved, at }));
@@ -1461,7 +1461,7 @@ test('a later marker on another provider displaces an earlier sound one on the r
   assert.deepEqual(providers(next), { reviewer: 'codex' });
 });
 
-// proves R-LOOP-8, R-GATE-9
+// proves R-LOOP-31, R-GATE-9
 test('under a bound of two rounds, an earlier pair holding only a marker on the wrong provider counts no round', () => {
   const now = [markerOf({ role: 'reviewer', provider: 'codex', at: 3, ...RULING.m9 }), markerOf({ role: 'architect', provider: 'claude', at: 4 })];
   const wrong = movedTo(markerOf({ role: 'reviewer', provider: 'claude', ...RULING.m9 }), { head: EARLIER, at: 1 });
@@ -1506,7 +1506,7 @@ test('given an Owner card with one agent marker on the wrong provider, L2 answer
   assert.deepEqual(providers(next), { reviewer: 'codex' });
 });
 
-// proves R-WORK-19, R-GATE-9
+// proves R-WORK-55, R-GATE-9
 test('a Coding card whose agent marker is on the wrong provider is refused as at the base, where on the right provider it continues', () => {
   assert.equal(panelAnswer(labelled([], { stage: 'coding', comments: panelSound('codex'), mergeable: 'conflicting' })).action, 'continue');
   const { next, events } = answeredUnchanged(labelled([], { stage: 'coding', comments: panelSound('claude'), mergeable: 'conflicting' }));
