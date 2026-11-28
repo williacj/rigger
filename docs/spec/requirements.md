@@ -354,6 +354,11 @@ In this table, "a read" is a read of the board that Rigger begins.
 | R-WORK-47 | Once each dispatch of a card has ended, Rigger keeps no more under the worktree root for that card than what follows, however many dispatches the card has had. That is its workspace, one directory for each judge role and each escalation role dispatched for it, and the leftovers `### R-WORK-44 — A dispatch's scratch directory once it ends` retains. The directories on the path to each of them count among it. | the engine | the test suite | |
 | R-WORK-48 | Where a card stops being worked in a way `### R-WORK-48 — A card's directories once it stops being worked` names, Rigger removes or retains each directory it made for the card as that table states. Rigger keeps a retained one only until the event that table names. | the engine | the test suite | |
 | R-WORK-49 | `rigger doctor` names each directory under the worktree root that Rigger retains under either `### R-WORK-44 — A dispatch's scratch directory once it ends` or `### R-WORK-48 — A card's directories once it stops being worked`. It names one only while no dispatch of its card runs, with the card where the board holds it and the row that retains it. A directory it names leaves `doctor`'s exit status as it is. | the engine | the test suite | |
+| R-WORK-50 | A maker Rigger dispatches, on any provider Rigger ships and on each host Rigger supports, can bring its card's line of work up to date, under the settings Rigger gives a consumer for that provider. A line of work is up to date where it contains the head commit of the repository's main line, as the forge held it when the maker read it. Its states are in `### R-WORK-50 — Bringing a line of work up to date`. | the engine | the test suite | |
+| R-WORK-51 | A maker bringing its card's line of work up to date replaces no commit the forge already holds on that line. The line it pushes contains every commit the forge held on it when the maker began. | the role prompt, and the settings Rigger gives a consumer | the test suite | |
+| R-WORK-52 | A maker bringing its card's line of work up to date changes no line of work on the forge but its card's, and pushes nothing to the repository's main line. | the role prompt, and the settings Rigger gives a consumer | the test suite | |
+| R-WORK-53 | A maker Rigger dispatches, on any provider Rigger ships and on each host Rigger supports, can replace the body of the open pull request from its card's line of work, under the settings Rigger gives a consumer for that provider. Its states are in `### R-WORK-53 — Replacing a pull request's body`. | the engine | the test suite | |
+| R-WORK-54 | A maker changes nothing of any pull request except the body of the open one from its card's line of work, beyond what opening that pull request sets (`R-WORK-18`) and the commits it pushes to that line. Instances of what stays unchanged are a pull request's title, base, state, draft status, labels, reviewers, assignees, milestone, projects, auto-merge setting and whether maintainers may edit it. A comment on a pull request is outside this row. | the engine, and the role prompt | the test suite, for a change the maker asks its agent CLI for; nothing could for code the maker writes and runs, which acts with the consumer's own credentials (`R-SAFE-4`) | |
 
 ### R-WORK-25 — Continuing workspace states
 
@@ -523,6 +528,39 @@ A card stops being worked when no dispatch of it runs, and Rigger starts none fo
 | a card whose judges are sound and whose merge waits on the forge: its required checks still running or not passing, or its mergeability unknown (`R-SCHED-26`) | in: retained; kept until a later pull reads the forge changed, after which a row above answers it, or its next attempt replaces them; named under `R-WORK-49` |
 | a card a run held up by a clock trigger has set aside (`R-SCHED-43`) | in: retained while the skip lasts; kept until the column change that ends the skip, or that run's end, after which a row above answers it, or its next attempt replaces them; named under `R-WORK-49` |
 | a card with a dispatch still running | out: it is still being worked, and `R-WORK-44` answers each dispatch as it ends |
+
+### R-WORK-50 — Bringing a line of work up to date
+
+In this table, "the head" is the head commit of the repository's main line as the forge held it when the maker read it. "The forge's line" is the card's line of work as the forge holds it once the maker's dispatch ends.
+
+| Situation | Scope |
+|---|---|
+| the card's line of work already contains the head | in: nothing changes on the forge |
+| the head joins the line of work with no conflict | in: the forge's line contains the head and every commit it held when the maker began |
+| a conflict the maker resolves | in: the forge's line contains the head, the maker's resolution, and every commit it held when the maker began |
+| a conflict the maker cannot resolve | in: the maker escalates the card as ambiguous (`R-ESCALATE-19`), naming each path in conflict; the forge's line gains no commit that leaves a conflict unresolved |
+| reading the main line from the forge fails, or the maker ends that read unanswered | in: the maker escalates the card as ambiguous, naming the read and how it failed; the forge's line gains no commit of the unfinished update |
+| that read still unanswered when the dispatch's time runs out | in: the dispatch has failed under `R-LOOP-15`; the forge's line gains no commit of the unfinished update |
+| the forge refuses the push of the updated line, or the push fails | in: the maker escalates the card as ambiguous, naming the push and how it failed |
+| the forge's line moved after the maker's workspace was made | in: the maker replaces none of the forge's commits; it brings them into its line, or escalates the card as ambiguous naming both heads |
+| the main line moves on after the maker read it | in: the forge's line contains the head the maker read; whether it conflicts with the later head is read again, as `### R-SCHED-26 — Unknown mergeability at a merge` answers |
+| a provider Rigger does not ship, or a host Rigger does not support | out |
+
+### R-WORK-53 — Replacing a pull request's body
+
+In this table, "the pull request" is the open pull request from the card's line of work.
+
+| Situation | Scope |
+|---|---|
+| the forge accepts the body | in: the pull request holds the body the maker wrote, and nothing else of it changes |
+| the forge refuses the edit | in: the maker escalates the card as ambiguous (`R-ESCALATE-19`), naming the refusal |
+| the edit fails, or the maker ends it unanswered | in: the maker escalates the card as ambiguous, naming the edit and how it failed, whatever body the forge then holds |
+| the edit still unanswered when the dispatch's time runs out | in: the dispatch has failed under `R-LOOP-15` |
+| more than one open pull request from the card's line of work | in: the maker replaces no body, and escalates the card as ambiguous naming each pull request |
+| a pull request from another line of work, or of another repository | in: the maker replaces no body there, under `R-WORK-54` |
+| no open pull request from the card's line of work | out: the maker has no body to replace, and `R-WORK-18` answers the card |
+| what a replaced body changes in judging, in rounds or at the gate | out: this row states nothing of it |
+| a provider Rigger does not ship, or a host Rigger does not support | out |
 
 ## R-LOOP — maker, judges, and rounds
 
