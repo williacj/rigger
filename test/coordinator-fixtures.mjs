@@ -20,15 +20,16 @@ export function scratch(prefix) {
 }
 
 /**
- * A `codex` stand-in. Call n records its arguments (one per line), working directory, `TMPDIR`
- * and standard input under `$CODEX_STUB_DIR/call-<n>/`, prints `$CODEX_STUB_DIR/out-<n>` if one
- * exists, and exits with `$CODEX_STUB_DIR/status-<n>`, or 0.
+ * A `codex` stand-in. Call n records its arguments (one per line), working directory, `TMPDIR`,
+ * standard input, `ZDOTDIR` and `BASH_ENV` under `$CODEX_STUB_DIR/call-<n>/`, prints
+ * `$CODEX_STUB_DIR/out-<n>` if one exists, and exits with `$CODEX_STUB_DIR/status-<n>`, or 0.
  */
 const CODEX = `#!/bin/sh
 n=1; while [ -e "$CODEX_STUB_DIR/call-$n" ]; do n=$((n + 1)); done
 d="$CODEX_STUB_DIR/call-$n"; mkdir -p "$d"
 for a do printf '%s\\n' "$a"; done > "$d/args"
 pwd > "$d/cwd"; printf '%s\\n' "\${TMPDIR-}" > "$d/tmpdir"; cat > "$d/stdin"
+printf '%s\\n' "\${ZDOTDIR-}" > "$d/zdotdir"; printf '%s\\n' "\${BASH_ENV-}" > "$d/bash-env"
 [ -f "$CODEX_STUB_DIR/out-$n" ] && cat "$CODEX_STUB_DIR/out-$n"
 [ -f "$CODEX_STUB_DIR/status-$n" ] && exit "$(cat "$CODEX_STUB_DIR/status-$n")"
 exit 0
@@ -127,7 +128,10 @@ export function codexCalls(w) {
   const calls = [];
   for (let n = 1; existsSync(join(w.stub, `call-${n}`)); n += 1) {
     const at = (name) => readFileSync(join(w.stub, `call-${n}`, name), 'utf8');
-    calls.push({ args: at('args').split('\n').slice(0, -1), cwd: at('cwd').trim(), tmpdir: at('tmpdir').trim(), stdin: at('stdin') });
+    calls.push({
+      args: at('args').split('\n').slice(0, -1), cwd: at('cwd').trim(), tmpdir: at('tmpdir').trim(), stdin: at('stdin'),
+      zdotdir: at('zdotdir').trim(), bashEnv: at('bash-env').trim(),
+    });
   }
   return calls;
 }
@@ -178,4 +182,38 @@ export function tree(dir) {
   };
   walk(dir, '');
   return found.sort();
+}
+
+/**
+ * A `gh` stand-in for the post check: each call appends its arguments and standard input, as one
+ * JSON line, to `$POSTED`, and exits 0. Its source is the check's own contract, that the real `gh`
+ * is started with the arguments and bytes it checked.
+ */
+const POSTED_GH = (node) => `#!${node}
+const fs = require('node:fs');
+let stdin = '';
+try { stdin = fs.readFileSync(0, 'utf8'); } catch {}
+fs.appendFileSync(process.env.POSTED, JSON.stringify({ args: process.argv.slice(2), stdin }) + '\\n');
+`;
+
+/**
+ * A scratch world for the `gh` function: the stand-in `gh` first on `PATH`, beside node, and a
+ * `HOME` the run made whose private list holds one invented entry. Reaches no forge and no list
+ * outside it. `posted()` reads what the stand-in received.
+ */
+export function postWorld(prefix) {
+  const base = scratch(prefix);
+  const bin = join(base, 'bin');
+  const home = join(base, 'home');
+  mkdirSync(bin);
+  mkdirSync(join(home, '.config', 'rigger'), { recursive: true });
+  writeFileSync(join(home, '.config', 'rigger', 'private-list'), 'zanzibar quokka\n');
+  executable(join(bin, 'gh'), POSTED_GH(process.execPath));
+  const log = join(base, 'posted.jsonl');
+  const env = {
+    PATH: `${bin}:${dirname(process.execPath)}:/usr/bin:/bin`,
+    HOME: home, TMPDIR: base, LANG: 'C', POSTED: log,
+  };
+  const posted = () => (existsSync(log) ? readFileSync(log, 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line)) : []);
+  return { base, bin, home, env, posted };
 }

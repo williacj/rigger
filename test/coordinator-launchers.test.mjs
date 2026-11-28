@@ -1,5 +1,6 @@
 // ABOUTME: Tests the coordinator's Codex launchers in tools/coordinator/ against stub `codex` and
 // `gh`: where each clones, logs and writes, and that each hands Codex what the source copy did.
+// It also starts the `gh` function, as a Claude Code and a Codex session would, with a stand-in `gh`.
 
 // The launchers are read from `CODEX_TOOLS_DIR` where it is set, and from tools/coordinator/
 // otherwise, so a judge can point these tests at the rebuilt source copy. That directory holds the
@@ -10,8 +11,9 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { chmodSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
 
-import { TOOLS, answer, assertToolingClean, codexCalls, forge, run, world } from './coordinator-fixtures.mjs';
+import { TOOLS, answer, assertToolingClean, codexCalls, forge, postWorld, run, world } from './coordinator-fixtures.mjs';
 import { cloneInto, gitIn } from './git-repository.mjs';
 import { SOURCE, sourceText } from './coordinator-source.mjs';
 import { parseMarker } from '../src/workflow/marker.mjs';
@@ -302,6 +304,30 @@ test('codex-retry.sh writes its .pid file beside the <log> argument it is handed
   assertToolingClean();
 });
 
+/** The flags each launcher passes so a Codex command runs in the shell that defines the `gh` function. */
+const SNAPSHOT_OFF = ['--disable', 'shell_snapshot', '--disable', 'shell_snapshot_v2'];
+const startFiles = (call) => [call.zdotdir, call.bashEnv];
+const holdsInOrder = (args, run) => args.some((_, at) => run.every((arg, offset) => args[at + offset] === arg));
+
+test('codex-maker.sh, codex-judge.sh and codex-resume.sh each start codex with the post check\'s start files and the shell snapshot off', () => {
+  const { w, bare, root } = setup('coord-start-files-');
+  const message = resumable(w, bare, root);
+  const runs = [
+    ['codex-maker.sh', ['7', 'rigger-7'], { RIGGER_WORKTREE_ROOT: root, RIGGER_REPO_URL: bare }],
+    ['codex-judge.sh', ['12', '7', '1'], { RIGGER_WORKTREE_ROOT: root, RIGGER_REPO_URL: bare }],
+    ['codex-resume.sh', ['7', 'thread-1', message], { RIGGER_WORKTREE_ROOT: root }],
+  ];
+  for (const [name, args, env] of runs) {
+    const before = codexCalls(w).length;
+    const result = run(w, launcher(name), args, { env });
+    assert.equal(result.status, 0, `${name}: ${result.stderr}`);
+    const call = codexCalls(w)[before];
+    assert.deepEqual(startFiles(call), [join(LAUNCHERS, 'post-check'), join(LAUNCHERS, 'post-check', 'bash-env.sh')], name);
+    assert.ok(holdsInOrder(call.args, SNAPSHOT_OFF), `${name} passes ${SNAPSHOT_OFF.join(' ')}: ${call.args.join(' ')}`);
+  }
+  assertToolingClean();
+});
+
 test('no launcher creates anything under an empty HOME when the configuration names directories outside it', () => {
   const { w, bare, root, logs } = setup('coord-home-', { stubSleep: true });
   const env = { RIGGER_WORKTREE_ROOT: root, RIGGER_REPO_URL: bare, CODEX_LOG_DIR: logs };
@@ -357,6 +383,10 @@ const placed = (text) => text
   .replace(/^End the verdict with the gate's marker block for your role\..*\n\n/m, '');
 
 /** What one copy of a launcher handed the stub codex, with that run's own paths named generically. */
+/** The arguments without the flags the launchers gained for the post check, which the source copies predate. */
+const withoutSnapshotFlags = (args) => args.filter((arg, at) => !(arg === '--disable' && SNAPSHOT_OFF.includes(args[at + 1]))
+  && !(SNAPSHOT_OFF.includes(arg) && arg !== '--disable' && args[at - 1] === '--disable'));
+
 function invocation(w, copy, launch) {
   const home = join(w.base, `home-${copy}`);
   const stub = join(w.base, `stub-${copy}`);
@@ -382,7 +412,7 @@ function invocation(w, copy, launch) {
   const generic = (text) => text.replaceAll(tools, '<TOOLS>').replaceAll(home, '<HOME>');
   const kept = (stdin) => placed(stdin.split('\n').filter((line) => !line.startsWith('<!-- ABOUTME:') && !line.includes('**Load and the slot:**')).map((line) => copy === 'source' && line.includes('Wrap every suite run') ? line.replaceAll('caffeinate -i', 'caffeinate -dims') : line).join('\n')).replace(/\n*$/, '');
   return codexCalls({ stub }).map((call) => ({
-    args: call.args.map(generic),
+    args: withoutSnapshotFlags(call.args).map(generic),
     cwd: generic(call.cwd),
     tmpdir: generic(call.tmpdir),
     stdin: generic(kept(call.stdin)),
@@ -418,4 +448,88 @@ test('each launcher hands the stub codex the invocation its rebuilt source copy 
     assert.deepEqual(moved, source, launch.name);
   }
   assertToolingClean();
+});
+
+// The `gh` function (card #1487). Repository tooling: no requirement binds what a post may hold.
+const SESSION_SHELL = join(LAUNCHERS, 'session-shell.sh');
+const T2_ENV = { ZDOTDIR: join(LAUNCHERS, 'post-check'), BASH_ENV: join(LAUNCHERS, 'post-check', 'bash-env.sh') };
+const BLOCKED = 'met the Zanzibar Quokka today';
+const PASSING = 'a plain comment';
+
+/** Runs a command as a Claude Code session does: the env file's text, then the command, in shell. */
+function asT1(p, shell, command) {
+  const script = `${readFileSync(SESSION_SHELL, 'utf8')}\neval "$POST_TEST_COMMAND"\n`;
+  return spawnSync(shell, ['-c', script], {
+    env: { ...p.env, CLAUDE_ENV_FILE: SESSION_SHELL, POST_TEST_COMMAND: command }, encoding: 'utf8', timeout: 60_000,
+  });
+}
+
+/**
+ * Runs a command as a Codex session's shell does, under flags, with T2's start files named. Its
+ * standard input is /dev/null: macOS bash 3.2 on a socket, which is what node gives a child for a
+ * pipe, takes itself to be run by a remote shell daemon, reads ~/.bashrc and skips BASH_ENV.
+ */
+function asT2(p, shell, flag, command) {
+  return spawnSync(shell, [flag, command], {
+    env: { ...p.env, ...T2_ENV }, stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8', timeout: 60_000,
+  });
+}
+
+const T1_FORMS = (text) => [
+  `gh issue comment 1 --body '${text}'`,
+  `printf x | gh issue comment 1 --body '${text}'`,
+  `v=$(gh issue comment 1 --body '${text}'); printf '%s' "$v"`,
+  `(gh issue comment 1 --body '${text}')`,
+  `for n in 1; do gh issue comment "$n" --body '${text}'; done`,
+  `gh issue comment 1 --body '${text}' & wait`,
+  `gh issue comment 1 --body-file - <<'END'\n${text}\nEND`,
+  `VAR=x gh issue comment 1 --body '${text}'`,
+];
+
+test('by T1, in zsh and bash, each form of a post holding a list entry reaches no gh, and each passing one reaches it unchanged', () => {
+  for (const shell of ['zsh', 'bash']) {
+    for (const [blocked, passing] of T1_FORMS(BLOCKED).map((form, at) => [form, T1_FORMS(PASSING)[at]])) {
+      const p = postWorld('post-t1-');
+      const refused = asT1(p, shell, blocked);
+      assert.deepEqual(p.posted(), [], `${shell}: ${blocked}`);
+      assert.match(refused.stderr, /refused: C5/, `${shell}: ${blocked}`);
+      asT1(p, shell, passing);
+      const [call] = p.posted();
+      assert.ok(call, `${shell}: ${passing} reached gh`);
+      const sent = call.args.includes('-') ? call.stdin : call.args.at(-1);
+      assert.equal(sent.trim(), PASSING, `${shell}: ${passing}`);
+      assert.deepEqual(call.args.slice(0, 3), ['issue', 'comment', '1']);
+    }
+  }
+});
+
+test('by T2, under zsh -c, zsh -lc, bash -c and bash -lc, a post holding a list entry reaches no gh, with a home profile that puts another gh first', () => {
+  for (const [shell, flag] of [['zsh', '-c'], ['zsh', '-lc'], ['bash', '-c'], ['bash', '-lc']]) {
+    const p = postWorld('post-t2-');
+    const other = join(p.base, 'other');
+    mkdirSync(other);
+    copyFileSync(join(p.bin, 'gh'), join(other, 'gh'));
+    chmodSync(join(other, 'gh'), 0o755);
+    for (const profile of ['.zshenv', '.zprofile', '.zshrc', '.zlogin', '.bash_profile', '.profile', '.bashrc']) {
+      writeFileSync(join(p.home, profile), `PATH="${other}:$PATH"\n`);
+    }
+    const refused = asT2(p, shell, flag, `gh issue comment 1 --body '${BLOCKED}'`);
+    assert.deepEqual(p.posted(), [], `${shell} ${flag}`);
+    assert.match(refused.stderr, /refused: C5/, `${shell} ${flag}`);
+    asT2(p, shell, flag, `gh issue comment 1 --body '${PASSING}'`);
+    assert.deepEqual(p.posted().map(({ args }) => args), [['issue', 'comment', '1', '--body', PASSING]], `${shell} ${flag}`);
+  }
+});
+
+test('a node child and a nested shell started from a T1 or a T2 shell hold no variable naming the function\'s files, and their gh is not the function', () => {
+  const probe = `node -e 'for (const k of ["CLAUDE_ENV_FILE","ZDOTDIR","BASH_ENV"]) console.log(k + "=" + (process.env[k] ?? ""))'; `
+    + `zsh -c 'echo "nested=$CLAUDE_ENV_FILE$ZDOTDIR$BASH_ENV"; whence -w gh'; bash -c 'type -t gh || echo none'`;
+  const p = postWorld('post-t5-');
+  for (const result of [asT1(p, 'zsh', probe), asT1(p, 'bash', probe), asT2(p, 'zsh', '-c', probe), asT2(p, 'bash', '-c', probe)]) {
+    assert.equal(result.status, 0, result.stderr);
+    const lines = result.stdout.trim().split('\n');
+    assert.deepEqual(lines.slice(0, 4), ['CLAUDE_ENV_FILE=', 'ZDOTDIR=', 'BASH_ENV=', 'nested='], result.stdout);
+    assert.equal(lines[4], `gh: command`, result.stdout);
+    assert.equal(lines[5], 'file', result.stdout);
+  }
 });
