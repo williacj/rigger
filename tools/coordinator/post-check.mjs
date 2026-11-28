@@ -261,7 +261,7 @@ const READS = new Set(['list', 'view', 'status', 'diff', 'checks']);
 /** Commands that run another program, whose posts the check cannot see (G6). */
 const RUNS_OTHERS = new Set(['copilot', 'extension exec', 'preview prompter']);
 /** Flags whose text the check cannot determine (G6). */
-const UNDETERMINED = new Set(['web', 'editor', 'fill', 'fill-first', 'fill-verbose', 'recover']);
+const UNDETERMINED = new Set(['web', 'editor', 'fill', 'fill-first', 'fill-verbose', 'recover', 'generate-notes', 'notes-from-tag']);
 /** Commands that pass a file's bytes to the forge as something other than a post's text (G7). */
 const SENDS_FILES = new Set(['release upload', 'gist create', 'gist edit', 'ssh-key add', 'gpg-key add',
   'repo deploy-key add', 'alias import', 'codespace cp', 'attestation verify', 'attestation trusted-root']);
@@ -272,6 +272,8 @@ const TEXT_FILES = new Set(['body-file', 'notes-file', 'from-file', 'input']);
 /** Commands that read their text from standard input where no flag gives it. */
 const STDIN_UNLESS = { 'secret set': ['body'], 'variable set': ['body'] };
 const STDIN_FLAGS = { 'workflow run': 'json', 'auth login': 'with-token' };
+/** Commands whose typed field reads `@file` or `@-` as its value, as gh's help says. */
+const TYPED_FIELDS = new Set(['api', 'workflow run']);
 /** What a command needs given, or it would prompt for its text: each inner list needs one of. */
 const PROMPTS = {
   'issue create': [['title'], ['body', 'body-file']],
@@ -281,7 +283,7 @@ const PROMPTS = {
   'pr comment': [['body', 'body-file', 'delete-last']],
   'discussion comment': [['body', 'body-file']],
   'pr review': [['approve', 'comment', 'request-changes']],
-  'release create': [['notes', 'notes-file', 'generate-notes', 'notes-from-tag']],
+  'release create': [['notes', 'notes-file']],
   'pr merge': [['merge', 'squash', 'rebase', 'auto', 'disable-auto']],
 };
 const EDITS = new Set(['issue edit', 'pr edit', 'discussion edit']);
@@ -316,9 +318,11 @@ export function decide(argv) {
     given.set(flag.long, [...(given.get(flag.long) ?? []), text]);
     if (TEXT_FILES.has(flag.long)) {
       parts.push(text === '-' ? { kind: 'stdin', place } : { kind: 'file', place, path: text, token, before });
-    } else if (path === 'api' && flag.long === 'field' && /^[^=]*=@/.test(text)) {
+    } else if (TYPED_FIELDS.has(path) && flag.long === 'field' && /^[^=]*=@/.test(text)) {
       const field = text.slice(0, text.indexOf('=@') + 2);
       const file = text.slice(field.length);
+      // The field's name is sent too, so it is checked as an argument is.
+      parts.push({ kind: 'arg', place, text: field.slice(0, -2) });
       parts.push(file === '-' ? { kind: 'stdin', place } : { kind: 'file', place, path: file, token, before: before + field });
     } else parts.push({ kind: 'arg', place, text });
   };
@@ -396,8 +400,8 @@ function placeOf(part, entries) {
 }
 
 /**
- * Why the command is refused, one line each, or none where it may run. \`list\` is #1486's
- * \`listState\` answer; \`bytesOf\` gives the bytes of a file or standard-input part.
+ * Why the command is refused, one line each, or none where it may run. `list` is #1486's
+ * `listState` answer; `bytesOf` gives the bytes of a file or standard-input part.
  */
 export function refusalsFor(decision, list, bytesOf) {
   if (decision.row === 'G1') return [];
@@ -405,7 +409,7 @@ export function refusalsFor(decision, list, bytesOf) {
   const { entries } = list;
   if (decision.row === 'G6' || decision.row === 'G7') {
     return [wording(entries, `refused: ${decision.row}, the text could not be checked: ${decision.place}.`,
-      `refused: ${decision.row}, the text could not be checked.`) ?? `refused: ${decision.row}.`];
+      `refused: ${decision.row}, the text could not be checked.`, `refused: ${decision.row}.`) ?? decision.row];
   }
   const found = new Map();
   for (const part of decision.parts) {
@@ -417,60 +421,69 @@ export function refusalsFor(decision, list, bytesOf) {
   return [...found.values()].map(({ row, place }, index) => refusalLine(row, place, index + 1, entries));
 }
 
-/** The arguments for the real \`gh\`: each file a flag named replaced by the copy that was checked. */
+/** The arguments for the real `gh`: each file a flag named replaced by the copy that was checked. */
 export function argumentsFor(argv, decision, copies) {
   const out = [...argv];
   for (const part of decision.parts) if (part.kind === 'file') out[part.token] = part.before + copies.get(part);
   return out;
 }
 
-/** A reason to refuse that is safe to print: it holds nothing the post or the list holds. */
-class Unchecked extends Error {}
+/**
+ * What one `gh` command outside G1 may run as, once its text is checked: `{ lines }`, the refusal
+ * to print, or `{ args, input }`, the arguments and standard input to start the real `gh` with.
+ * `read` gives a file or standard-input part's bytes and is called once for each. Each file a flag
+ * named is handed on as a copy in `directory` of the bytes read, so what is sent is what was checked.
+ */
+export function checked(argv, { list, read, directory }) {
+  const decision = decide(argv);
+  const entries = list.entries ?? [];
+  const bytes = new Map();
+  let input;
+  if (!list.refusal && decision.row !== 'G6' && decision.row !== 'G7') {
+    for (const part of decision.parts) {
+      if (part.kind === 'arg') continue;
+      try { bytes.set(part, read(part)); } catch {
+        const reason = part.kind === 'stdin' ? 'standard input could not be read' : 'a file it names could not be read';
+        return { lines: [wording(entries, `refused: the post could not be checked: ${reason}.`, 'refused.') ?? 'no'] };
+      }
+      if (part.kind === 'stdin') input = bytes.get(part);
+    }
+  }
+  const lines = refusalsFor(decision, list, (part) => bytes.get(part));
+  if (lines.length > 0) return { lines };
+  const copies = new Map();
+  for (const part of decision.parts) {
+    if (part.kind !== 'file') continue;
+    const copy = join(directory, String(copies.size));
+    writeFileSync(copy, bytes.get(part), { mode: 0o600 });
+    copies.set(part, copy);
+  }
+  return { args: argumentsFor(argv, decision, copies), input };
+}
 
 /**
- * Runs one \`gh\` command: a G1 read at once; anything else only once its text passes, with the
- * bytes that were checked. Returns the exit status. No \`gh\` starts where the check fails.
+ * Runs one `gh` command: a G1 read at once; anything else only once its text passes, with the
+ * bytes that were checked. Returns the exit status. No `gh` starts where the check fails.
  */
 function post(argv) {
-  const decision = decide(argv);
-  if (decision.row === 'G1') return finish(spawnSync('gh', argv, { stdio: 'inherit' }));
+  if (decide(argv).row === 'G1') return finish(spawnSync('gh', argv, { stdio: 'inherit' }));
   const list = readList();
-  const entries = list.entries ?? [];
   let directory;
   try {
-    const bytes = new Map();
-    let input;
-    if (!list.refusal && decision.row !== 'G6' && decision.row !== 'G7') {
-      for (const part of decision.parts) {
-        if (part.kind === 'arg') continue;
-        try { bytes.set(part, readFileSync(part.kind === 'stdin' ? 0 : part.path)); }
-        catch { throw new Unchecked(part.kind === 'stdin' ? 'standard input could not be read' : 'a file it names could not be read'); }
-        if (part.kind === 'stdin') input = bytes.get(part);
-      }
-    }
-    const lines = refusalsFor(decision, list, (part) => bytes.get(part));
-    if (lines.length > 0) { for (const line of lines) process.stderr.write(`${line}\n`); return 1; }
     directory = mkdtempSync(join(tmpdir(), 'rigger-post-check-'));
-    const copies = new Map();
-    for (const part of decision.parts) {
-      if (part.kind !== 'file') continue;
-      const copy = join(directory, String(copies.size));
-      writeFileSync(copy, bytes.get(part), { mode: 0o600 });
-      copies.set(part, copy);
-    }
-    return finish(spawnSync('gh', argumentsFor(argv, decision, copies), {
-      stdio: [input === undefined ? 'ignore' : 'pipe', 'inherit', 'inherit'], input,
-    }));
-  } catch (error) {
-    const reason = error instanceof Unchecked ? error.message : 'the check failed';
-    process.stderr.write(`${wording(entries, `refused: the post could not be checked: ${reason}.`, 'refused.') ?? 'no'}\n`);
+    const read = (part) => readFileSync(part.kind === 'stdin' ? 0 : part.path);
+    const { lines, args, input } = checked(argv, { list, read, directory });
+    if (lines) { for (const line of lines) process.stderr.write(`${line}\n`); return 1; }
+    return finish(spawnSync('gh', args, { stdio: [input === undefined ? 'ignore' : 'pipe', 'inherit', 'inherit'], input }));
+  } catch {
+    process.stderr.write(`${wording(list.entries ?? [], 'refused: the post could not be checked: the check failed.', 'refused.') ?? 'no'}\n`);
     return 1;
   } finally {
     if (directory) rmSync(directory, { recursive: true, force: true });
   }
 }
 
-/** The real \`gh\`'s exit status, or 1 where it could not start or was ended by a signal. */
+/** The real `gh`'s exit status, or 1 where it could not start or was ended by a signal. */
 function finish(result) {
   if (result.error) { process.stderr.write(`gh could not start: ${result.error.code ?? 'error'}\n`); return 1; }
   return result.status ?? 1;

@@ -309,6 +309,9 @@ const SNAPSHOT_OFF = ['--disable', 'shell_snapshot', '--disable', 'shell_snapsho
 const startFiles = (call) => [call.zdotdir, call.bashEnv];
 const holdsInOrder = (args, run) => args.some((_, at) => run.every((arg, offset) => args[at + offset] === arg));
 
+// D29 reason: wiring; the real launchers start the stub codex, which records the variables and
+// arguments it was handed. Its claim depends on no decision Rigger makes: the launchers are the
+// coordinator's tooling, not Rigger's code.
 test('codex-maker.sh, codex-judge.sh and codex-resume.sh each start codex with the post check\'s start files and the shell snapshot off', () => {
   const { w, bare, root } = setup('coord-start-files-');
   const message = resumable(w, bare, root);
@@ -486,6 +489,10 @@ const T1_FORMS = (text) => [
   `VAR=x gh issue comment 1 --body '${text}'`,
 ];
 
+// D29 reason: wiring; a real zsh and bash read the function as T1's file gives it and run each
+// form through it to the stand-in gh. Its claim depends on no decision Rigger makes. The check's
+// own decision for a post is proved in process by test/post-check.test.mjs, "for each of G2 to G5, text in a cell C1,
+// C2, C3 or C5 refuses is refused, naming the row and the part".
 test('by T1, in zsh and bash, each form of a post holding a list entry reaches no gh, and each passing one reaches it unchanged', () => {
   for (const shell of ['zsh', 'bash']) {
     for (const [blocked, passing] of T1_FORMS(BLOCKED).map((form, at) => [form, T1_FORMS(PASSING)[at]])) {
@@ -503,6 +510,9 @@ test('by T1, in zsh and bash, each form of a post holding a list entry reaches n
   }
 });
 
+// D29 reason: OS behaviour; which start files zsh and bash read under -c and -lc, and the PATH a
+// home profile and path_helper leave, belong to the shells and the host. Its claim depends on no
+// decision Rigger makes; the check's own decision is proved by test/post-check.test.mjs, as above.
 test('by T2, under zsh -c, zsh -lc, bash -c and bash -lc, a post holding a list entry reaches no gh, with a home profile that puts another gh first', () => {
   for (const [shell, flag] of [['zsh', '-c'], ['zsh', '-lc'], ['bash', '-c'], ['bash', '-lc']]) {
     const p = postWorld('post-t2-');
@@ -521,6 +531,8 @@ test('by T2, under zsh -c, zsh -lc, bash -c and bash -lc, a post holding a list 
   }
 });
 
+// D29 reason: OS behaviour; what a child process and a nested shell inherit from the session's
+// shell is the host's. Its claim depends on no decision Rigger makes.
 test('a node child and a nested shell started from a T1 or a T2 shell hold no variable naming the function\'s files, and their gh is not the function', () => {
   const probe = `node -e 'for (const k of ["CLAUDE_ENV_FILE","ZDOTDIR","BASH_ENV"]) console.log(k + "=" + (process.env[k] ?? ""))'; `
     + `zsh -c 'echo "nested=$CLAUDE_ENV_FILE$ZDOTDIR$BASH_ENV"; whence -w gh'; bash -c 'type -t gh || echo none'`;
@@ -534,6 +546,10 @@ test('a node child and a nested shell started from a T1 or a T2 shell hold no va
   }
 });
 
+// D29 reason: wiring; the function, the check's process and the stand-in gh pass a real file and a
+// process substitution between them. Its claim depends on no decision Rigger makes. That the bytes
+// handed on are the bytes read is proved in process by test/post-check.test.mjs, "the bytes handed to the real gh are
+// the bytes the check read, even where the source changes after the read".
 test('a body file is sent as the bytes the check read, even where the file changes after the read, and a file written by the posting command is checked', () => {
   const p = postWorld('post-file-');
   const body = join(p.base, 'body.md');
@@ -550,6 +566,10 @@ test('a body file is sent as the bytes the check read, even where the file chang
   assert.deepEqual(Object.values(calls[1].files), [PASSING]);
 });
 
+// D29 reason: wiring; a real bash runs the command a role is given through the function to the
+// stand-in gh. Its claim depends on no decision Rigger makes; the row the command falls in is
+// proved by test/post-check.test.mjs, "the escalation command the architecture gives a role is G3, with its file as
+// the part".
 test('the escalation command a role is given is sent with its passing content unchanged', () => {
   const p = postWorld('post-escalation-');
   writeFileSync(join(p.base, '.rigger-escalation.md'), `${PASSING}\n`);
@@ -562,6 +582,8 @@ test('the escalation command a role is given is sent with its passing content un
   assert.deepEqual(Object.values(call.files), [`${PASSING}\n`]);
 });
 
+// D29 reason: wiring; the function starts the check's process, which must exit without starting
+// the stand-in gh. Its claim depends on no decision Rigger makes.
 test('where the check fails, no gh starts', () => {
   const p = postWorld('post-fails-');
   const result = asT1(p, 'bash', `gh issue comment 1 --body-file '${join(p.base, 'no-such-file.md')}'`);
