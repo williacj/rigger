@@ -161,6 +161,13 @@ opens. In this table, that name is the trigger's author setting.
 | R-SCHED-42 | Rigger refuses a configuration in which a clock trigger names as its card's author anything but `owner` or a role the configuration declares, and the refusal names the trigger and the name. The values it refuses are in `### R-CARD-41 — The author a clock trigger names`. | the config validator | the test suite | |
 | R-SCHED-28 | While a clock trigger is declared, `rigger run` does not end when the board drains. | the engine | the test suite | |
 | R-SCHED-29 | While a declared clock trigger keeps `rigger run` up and that run holds no claim, Rigger pulls a card in Ready no later than the bound after the card's start. A card's start is the later of when it enters Ready and when `R-SCHED-43` last ended a skip of it. The bound is the poll interval the consumer declares, plus one pull's reads of the board. A poll whose reads fail claims nothing, and the bound then runs from the next poll whose reads succeed. The cards it binds are in `### R-SCHED-29 — The Ready cards a clock-held run pulls`. | the engine | the test suite | |
+| R-SCHED-44 | A card waits on its checks where every configured judge has returned a sound verdict at its pull request's head, against its current acceptance, and not every one of the consumer's own checks at that head has passed. A check's states are in `### R-SCHED-44 — The state of a consumer check`. | the engine | the test suite | |
+| R-SCHED-45 | A run with no clock trigger declared does not end when the board drains while a card waits on its checks and all of these hold for it. The run ends at the first drain at which no such card remains. Its states are in `### R-SCHED-45 — A no-clock run held up by a card waiting on its checks`: | the engine | the test suite | |
+| R-SCHED-46 | — the card carries no escalation label; | the engine | the test suite | |
+| R-SCHED-47 | — admission is open; | the engine | the test suite | |
+| R-SCHED-48 | — the run has not set the card aside; | the engine | the test suite | |
+| R-SCHED-49 | — the card's wait, as Rigger last read it, has not reached the bound `R-ESCALATE-29` sets. | the engine | the test suite | |
+| R-SCHED-50 | Where the checks of a card waiting on them all pass while `rigger run` is up, Rigger merges the card no later than the bound after they passed. The bound is the run's interval plus one pull's reads of the board. A run's interval is the poll interval the consumer declares, or 60 seconds where it declares none. Its states are in `### R-SCHED-50 — How soon a card whose checks pass merges`. | the engine | the test suite | |
 | R-SCHED-30 | Rigger refuses a configuration that declares a clock trigger and no poll interval, and the refusal names the missing interval. No default interval applies. | the config validator | the test suite | |
 | R-SCHED-31 | When a clock trigger whose work is a card comes due, Rigger creates its card, even while the card from the trigger's previous firing is still open. | the engine | the test suite | |
 | R-SCHED-32 | Rigger creates at most one card for each occurrence of a clock trigger, across a restart that falls between the occurrence's firing and its card. A person's edit to that card before the restart is outside this row. | the engine | the test suite | |
@@ -261,6 +268,63 @@ In this table, "the labels" are the labels a clock trigger's card template carri
 | two or more kinds of work would select the template's card by them | Rigger refuses the configuration | in |
 | they include the status label | Rigger refuses the configuration | in |
 | exactly one kind of work would select the template's card by them, and they exclude the status label | this row refuses nothing | in |
+
+### R-SCHED-44 — The state of a consumer check
+
+The consumer's own checks are the ones `R-GATE-8` names. The forge owns each check's state, and Rigger reads it there (`D16`).
+
+| What the forge shows for the check at the head | The check's state | Scope |
+|---|---|---|
+| its latest run completed, with a conclusion of success, neutral or skipped | passed | in |
+| its latest run completed, with any other conclusion | failed | in |
+| its latest run not yet completed | neither passed nor failed | in |
+| a commit status of success | passed | in |
+| a commit status of failure or error | failed | in |
+| a commit status of pending | neither passed nor failed | in |
+| no run and no status | neither passed nor failed | in |
+| a run and a commit status of the same name | failed where either failed; otherwise neither where either is neither; otherwise passed | in |
+| a check the base branch's rules do not require | — | out: it is none of the consumer's own checks |
+| the gate's own check | — | out: `R-GATE-5` to `R-GATE-7` govern what it answers |
+
+### R-SCHED-45 — A no-clock run held up by a card waiting on its checks
+
+In this table, "the card" is a card waiting on its checks for which `R-SCHED-46` to `R-SCHED-49` hold.
+
+| At a drain of a run with no clock trigger declared | What follows | Scope |
+|---|---|---|
+| no card waits on its checks | the run ends | in |
+| the card | the run stays up, and reads the board again within its interval (`R-SCHED-50`) | in |
+| the card, whose checks then all pass | Rigger merges it under `R-SCHED-50`, and the run ends at the first drain at which no such card remains | in |
+| the card, one of whose checks then fails | Rigger escalates it under `R-ESCALATE-28`, and it holds the run up no longer | in |
+| the card, whose wait then reaches the bound | Rigger escalates it under `R-ESCALATE-29`, and it holds the run up no longer | in |
+| the card, whose head or acceptance then changes | it waits on its checks no longer, and Rigger answers it as any card whose verdicts are stale | in |
+| the card, whose escalation the forge then refuses | the run sets it aside, and it holds the run up no longer | in |
+| the card, while a read of the board fails | the run stays up until the card's wait, as Rigger last read it, reaches the bound | in |
+| a card waiting on its checks that carries the escalation label, or that the run set aside, or any card while admission is closed | it holds the run up not at all | in |
+| the card, and a pull while the run stays up finds a card in Ready and a slot free | Rigger claims the Ready card under `R-SCHED-6` | in |
+| a signal, or the owner unloading the launchd job | — | out: the signal ends the run, whatever holds it up |
+| `rigger once` | — | out: `once` ends after its one card |
+| a clock trigger declared | — | out: `R-SCHED-28` keeps the run up |
+
+### R-SCHED-50 — How soon a card whose checks pass merges
+
+The bound runs from the moment the card's checks have all passed, except where a row below moves its start.
+
+| When the checks all pass | Where the bound runs from | Scope |
+|---|---|---|
+| the run holds no claim, and no row below applies | the checks passing | in |
+| the run holds a claim | the end of the first of its claims to end after the checks pass | in |
+| a read of the board fails | the next read of the board that succeeds | in |
+| the card carries the escalation label | the owner's removal of the label (`R-ESCALATE-11`) | in |
+| the forge reads the pull request's mergeability as unknown | — | out: `R-SCHED-26` governs it |
+| the forge reads the pull request as conflicting | — | out: `R-CONFLICT-1` governs it |
+| admission is closed | — | out: `R-SCHED-3` governs it |
+| a clock-held run keeps the card skipped | — | out: `R-SCHED-43` governs it |
+| a run with no clock trigger declared set the card aside | — | out: the card stays skipped for that run's life, and a later invocation reads it again |
+| no run is up | — | out: nothing reads the board until the next invocation starts |
+| the head or the acceptance changes after the checks pass | — | out: the verdicts are stale (`R-GATE-7`) |
+| the forge refuses the merge | — | out: `R-RECORD-10` names why |
+| a person merges the pull request | — | out: `R-WORK-35` governs it |
 
 ## R-WORK — isolation and exclusivity
 
@@ -594,6 +658,8 @@ Claude Code's configuration home is `~/.claude` unless the consumer moves it. Ea
 | R-ESCALATE-25 | — the role exits non-zero; | the engine | the test suite | D26 |
 | R-ESCALATE-26 | — the role's dispatch fails to start twice. A role's dispatch that fails to start never closes admission. | the engine | the test suite | D26 |
 | R-ESCALATE-27 | A maker, or a role an escalation goes to, that Rigger dispatches, on any provider Rigger ships and on each host Rigger supports, can write the escalation note its instruction asks for, under the settings `rigger init` gives a consumer. | the engine | the test suite | D26 |
+| R-ESCALATE-28 | Rigger escalates a card waiting on its checks as ambiguous at the first read that finds one of the consumer's own checks at its head failed, and dispatches no maker for it. Its comment on the card's issue (`R-ESCALATE-9`) names the pull request, its head and each failed check. It says Rigger cannot tell whether the work or its environment failed them. Rigger never escalates it as a fault that must not merge. Its states are in `### R-ESCALATE-28 — A card waiting on its checks`. | the engine | the test suite | D3 |
+| R-ESCALATE-29 | Rigger escalates a card as ambiguous where it has waited on its checks, with none failed, for longer than the consumer allows, two hours unless the consumer says otherwise. The wait runs from the later of the card's last sound verdict at that head and acceptance, and the latest start the forge shows for one of those checks. The escalation names each check that has not passed, and its state. | the engine | the test suite | D3 |
 
 ### R-ESCALATE-9 — An escalation partly written
 
@@ -619,6 +685,27 @@ Claude Code's configuration home is `~/.claude` unless the consumer moves it. Ea
 | any category to a value that is not a string | refused, naming the category | in |
 | a key that is no category | refused, naming the key | in |
 | `escalate` as a list of categories | refused, naming the key | in |
+
+### R-ESCALATE-28 — A card waiting on its checks
+
+In this table, a check's state is as `### R-SCHED-44 — The state of a consumer check` gives it, and "the bound" is the one `R-ESCALATE-29` sets.
+
+| The consumer's checks at the card's head, as Rigger reads them | What follows | Scope |
+|---|---|---|
+| every one passed | Rigger merges the card under `R-SCHED-50` | in |
+| one failed, whatever the others' states | Rigger escalates the card under `R-ESCALATE-28` at that read | in |
+| none failed, some neither passed nor failed, and the wait is below the bound | the card stays where it is, and Rigger reads its checks again at its next read of the board | in |
+| none failed, some neither passed nor failed, and the wait has reached the bound | Rigger escalates the card under `R-ESCALATE-29` | in |
+| the read fails, or times out | the card stays where it is. Rigger names the read in its output and its record, and reads again at its next read of the board. A failed read escalates nothing | in |
+| one failed, then passed on a re-run before Rigger read it | Rigger reads it passed, and the rows above answer the card | in |
+| one failed and Rigger escalated the card, then it passed on a re-run, with the label still on | Rigger dispatches nothing for the card (`R-ESCALATE-10`) | in |
+| one failed and Rigger escalated the card, then it passed on a re-run, and the owner removed the label | Rigger merges the card under `R-SCHED-50`, in the owner's column or in Review, whichever holds it | in |
+| one failed and Rigger escalated the card, and the owner removed the label while it still fails | Rigger escalates the card again at its next read | in |
+| one failed and Rigger escalated the card, then a re-run still running when the owner removed the label | the card waits on its checks, and its wait runs from the re-run's start | in |
+| the card's head or acceptance changed after its verdicts | — | out: it waits on its checks no longer, and its judges rule again (`R-LOOP-8`) |
+| a judge has returned no sound verdict at the head and acceptance | — | out: it waits on no checks |
+| the base branch's rules require no check but the gate's own | — | out: a card whose judges are all sound has no consumer check to wait on |
+| the forge refuses a write of the escalation | — | out: `### R-ESCALATE-9 — An escalation partly written` governs it |
 
 ## R-STATE — what survives a restart
 
