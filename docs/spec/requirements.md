@@ -159,6 +159,17 @@ opens. In this table, that name is the trigger's author setting.
 | R-SCHED-18 | While admission is closed, or its record cannot be read, `rigger plan` shows no card the next run would pull, and says why. | the engine | the test suite | |
 | R-SCHED-19 | Rigger refuses a configuration in which a kind of work selects by a label Rigger fixes, or names one as the epic label, in any letter case, and the refusal names both. A role's or a step's labels are outside this row, since they select nothing on a card Rigger will not work. | the config validator | the test suite | |
 | R-SCHED-42 | Rigger refuses a configuration in which a clock trigger names as its card's author anything but `owner` or a role the configuration declares, and the refusal names the trigger and the name. The values it refuses are in `### R-CARD-41 — The author a clock trigger names`. | the config validator | the test suite | |
+| R-SCHED-44 | A hand label is a card label the consumer's configuration declares as marking work that no maker Rigger dispatches does. Rigger never pulls or claims a card in Ready that carries a hand label. Its edges beside other rows are in `### R-SCHED-44 — A card in Ready carrying a hand label`. | the engine | the test suite | |
+| R-SCHED-45 | Rigger dispatches nothing for a card in Ready that carries a hand label, for any role, provisioning steps included. The card stays in Ready. | the engine | the test suite | |
+| R-SCHED-46 | Rigger refuses a card in Ready that carries a hand label, and the refusal names the card and each hand label it carries. `rigger plan` reports it as a card it refused, as it reports a card `R-SCHED-12` refuses. | the engine | the test suite | |
+| R-SCHED-47 | Rigger never escalates a card for a refusal under `R-SCHED-46` or `R-SCHED-48`, in any category. It moves, labels and comments on nothing for that refusal. | the engine | the test suite | |
+| R-SCHED-48 | Rigger never begins a maker's attempt at a card that carries a hand label, in any column, whether the attempt would start the card's work or continue it. Where its next action for such a card outside Ready would begin one, Rigger refuses the card as `R-SCHED-46` states, and the card stays in its column. | the engine | the test suite | |
+| R-SCHED-49 | Outside Ready, Rigger answers a card that carries a hand label as it answers any other card wherever `R-SCHED-48` does not refuse it, its judges and its merge included. An attempt Rigger began before a read of the board found the label runs to its end. Its states are in `### R-SCHED-49 — A hand label over a card's life`. | the engine | the test suite | |
+| R-SCHED-50 | A card carries a hand label where one of its labels equals a hand label in any letter case. | the engine | the test suite | |
+| R-SCHED-51 | Under a configuration that declares no hand label, no card carries one. Rigger then pulls, refuses and reports every card as the rows that name no hand label require. | the engine | the test suite | |
+| R-SCHED-52 | Rigger refuses a configuration that declares an empty list of hand labels, and the refusal names the declaration of hand labels. | the config validator | the test suite | |
+| R-SCHED-53 | Rigger refuses a configuration that declares as a hand label a label Rigger fixes, or the epic label, in any letter case. The refusal names the hand label and the label it equals. | the config validator | the test suite | |
+| R-SCHED-54 | Rigger refuses a configuration in which a kind of work selects by a hand label, in any letter case, and the refusal names the kind and the label. | the config validator | the test suite | |
 | R-SCHED-28 | While a clock trigger is declared, `rigger run` does not end when the board drains. | the engine | the test suite | |
 | R-SCHED-29 | While a declared clock trigger keeps `rigger run` up and that run holds no claim, Rigger pulls a card in Ready no later than the bound after the card's start. A card's start is the later of when it enters Ready and when `R-SCHED-43` last ended a skip of it. The bound is the poll interval the consumer declares, plus one pull's reads of the board. A poll whose reads fail claims nothing, and the bound then runs from the next poll whose reads succeed. The cards it binds are in `### R-SCHED-29 — The Ready cards a clock-held run pulls`. | the engine | the test suite | |
 | R-SCHED-30 | Rigger refuses a configuration that declares a clock trigger and no poll interval, and the refusal names the missing interval. No default interval applies. | the config validator | the test suite | |
@@ -173,6 +184,7 @@ opens. In this table, that name is the trigger's author setting.
 | R-SCHED-39 | A start that cannot read the record still pulls cards. | the engine | the test suite | |
 | R-SCHED-40 | Rigger refuses a configuration in which a clock trigger's card template carries no acceptance, or an acceptance that only restates the template's title. The refusal names the trigger. | the config validator | the test suite | |
 | R-SCHED-41 | Rigger refuses a configuration in which a clock trigger's card template carries labels that `### R-SCHED-41 — The template labels Rigger refuses` marks refused. The refusal names the trigger and the labels. | the config validator | the test suite | |
+| R-SCHED-55 | Rigger refuses a configuration in which a clock trigger's card template carries a hand label, in any letter case. The refusal names the trigger and the label. | the config validator | the test suite | |
 | R-SCHED-43 | While a declared clock trigger keeps `rigger run` up, that run skips each card it has set aside, and never claims a skipped card. A run sets a card aside when, having claimed it, it leaves it out of its later pulls. The skip ends when a read of the board that Rigger begins after setting the card aside finds the card in a column other than the one Rigger last knew it in. That column is the one Rigger read when it claimed the card, as changed by each of the run's own column changes of it that the board accepted. A read begun after setting the card aside that finds it in Ready ends the skip where the column Rigger last knew it in is another. A column change undone before Rigger next reads the board can go unseen, and the card then stays skipped. | the engine | the test suite | |
 | R-SCHED-20 | When Rigger closes admission itself, it opens an issue titled `Rigger closed admission` in the owner's column, carrying the status label Rigger fixes. It opens none where an open issue carrying that label exists. The issue names the reason, the evidence and the card whose failures closed admission. | the engine | the test suite | |
 | R-SCHED-27 | Rigger never works an item carrying the status label as a card: it never claims it, dispatches nothing for it, and never reports it as refused. An issue a person or `rigger resume` removes the label from is no longer the status issue. | the engine | the test suite | |
@@ -261,6 +273,39 @@ In this table, "the labels" are the labels a clock trigger's card template carri
 | two or more kinds of work would select the template's card by them | Rigger refuses the configuration | in |
 | they include the status label | Rigger refuses the configuration | in |
 | exactly one kind of work would select the template's card by them, and they exclude the status label | this row refuses nothing | in |
+
+### R-SCHED-44 — A card in Ready carrying a hand label
+
+Each row is a card in Ready that carries a hand label and that another row of this register also
+reaches. Where one of the first three rows reaches the card, the first of them that does governs.
+Where none of them does, `R-SCHED-44` to `R-SCHED-47` govern, beside any other row that reaches it.
+
+| The card also | The row that governs | What `rigger plan` reports | Scope |
+|---|---|---|---|
+| carries the status label (`R-SCHED-27`) | `R-SCHED-27` | nothing: the item is never reported as refused | in |
+| carries the escalation label (`R-ESCALATE-10`) | `R-ESCALATE-10` | the card as escalated, never as refused | in |
+| carries the epic label, or no kind of work selects it (`R-SCHED-11`) | `R-SCHED-11` | nothing: the card is never reported as refused | in |
+| is reached by no other row | `R-SCHED-44` to `R-SCHED-47` | the card as refused, naming each hand label it carries | in |
+| has no acceptance, or one that only restates its title (`R-CARD-7`, `R-CARD-8`) | `R-SCHED-44` to `R-SCHED-47` | the card as refused, naming each hand label it carries and no other reason | in |
+| is selected by two or more kinds of work (`R-SCHED-12`) | `R-SCHED-44` to `R-SCHED-47` | the card as refused, naming each hand label it carries and no other reason | in |
+| carries labels selecting different tiers or providers for its maker (`R-LOOP-13`, `R-LOOP-16`) | `R-SCHED-44` to `R-SCHED-47` | the card as refused, naming each hand label it carries and no other reason | in |
+| has its line of work, or a merged pull request from it, on the forge (`R-WORK-19`) | `R-SCHED-44` to `R-SCHED-47`, so Rigger escalates nothing for it | the card as refused, naming each hand label it carries and no other reason | in |
+| is one a pull would not claim, the first out-of-scope row of `### R-SCHED-29 — The Ready cards a clock-held run pulls` | `R-SCHED-44` to `R-SCHED-47`, and the card is outside `R-SCHED-29`'s bound | the card as refused, naming each hand label it carries | in |
+| is in Ready while admission is closed, or its record cannot be read (`R-SCHED-3`, `R-SCHED-18`) | `R-SCHED-44` to `R-SCHED-47`, beside `R-SCHED-18` for what the next run would pull | the card as refused, in every state of admission | in |
+| is set aside by a clock-held run (`R-SCHED-43`) | both: the run never claims the card | the card as refused, naming each hand label it carries | in |
+
+### R-SCHED-49 — A hand label over a card's life
+
+In this table, "a read" is a read of the board that Rigger begins.
+
+| The card | Rigger's next action for it, but for the hand label | What follows | Scope |
+|---|---|---|---|
+| in Ready, carrying a hand label at a read | any | `R-SCHED-44` to `R-SCHED-47` and their table govern it | in |
+| outside Ready, carrying a hand label at a read, claimed or not | begin a maker's attempt, starting its work or continuing it | Rigger refuses it under `R-SCHED-48`; it stays in its column and is not escalated | in |
+| outside Ready, carrying a hand label at a read, claimed or not | dispatch its judges, merge it, or move it | Rigger answers it as any other card, under `R-SCHED-49` | in |
+| claimed before the first read that found its hand label, with an attempt running | any | that attempt runs to its end, its steps and its maker included; Rigger's next action after it follows the rows above | in |
+| carrying no hand label at a read, because a person removed the label or the configuration stopped declaring it | any | Rigger answers it as any other card from that read on, and pulls it from Ready as any other card | in |
+| a label added or removed after Rigger's last read | any | — | out: Rigger answers the card from the last read it made, and the next read finds the change |
 
 ## R-WORK — isolation and exclusivity
 
@@ -803,6 +848,7 @@ Each failure is one of three classes:
 | a card refused for its acceptance's form (`R-CARD-7`, `R-CARD-8`) | out | — | out: it stays a refusal `rigger plan` reports |
 | a card refused for its kinds (`R-SCHED-12`) | out | — | out: it stays a refusal `rigger plan` reports |
 | a card refused for its labels' tiers or providers (`R-LOOP-13`, `R-LOOP-16`) | out | — | out: it stays a refusal `rigger plan` reports |
+| a card refused for a hand label (`R-SCHED-46`, `R-SCHED-48`) | out | — | out: it stays a refusal `rigger plan` reports |
 
 ## R-PROV — provisioning
 
