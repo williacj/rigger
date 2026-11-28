@@ -181,9 +181,9 @@ opens. In this table, that name is the trigger's author setting.
 | R-SCHED-24 | When `rigger resume` reopens admission, it closes every open issue carrying the status label. | the engine | the test suite | |
 | R-SCHED-25 | Where an open issue carrying the status label exists when Rigger closes admission, Rigger comments on it, naming the reason and the card whose failures closed admission. | the engine | the test suite | |
 | R-SCHED-26 | Before Rigger's lane gives up on a merge because the forge reads the pull request's mergeability as unknown, Rigger reads that mergeability again. It reads again 5 seconds after each read that answers unknown. It gives up only at an unknown read made 60 seconds or more after the first. Its states are in `### R-SCHED-26 — Unknown mergeability at a merge`. | the engine | the test suite | |
-| R-SCHED-56 | While a declared clock trigger keeps `rigger run` up, that run skips each card it has set aside, and never claims a skipped card. A run sets a card aside when, having claimed it, it leaves it out of its later pulls. The skip ends when a read of the board that Rigger begins after setting the card aside finds the card in a column other than the one Rigger last knew it in. That column is the one Rigger read when it claimed the card, as changed by each of the run's own column changes of it that the board accepted. A read begun after setting the card aside that finds it in Ready ends the skip where the column Rigger last knew it in is another. The skip of a card the run set aside on escalating it also ends when a read begun after the owner answered that escalation finds the escalation label gone. A column change undone before Rigger next reads the board can go unseen, and the card then stays skipped. | the engine | the test suite | |
-| R-SCHED-57 | While a declared clock trigger keeps `rigger run` up, Rigger acts on the owner's answer to an escalation of a card no later than `R-SCHED-29`'s bound, counted from the owner's removal of the label. Acting on it is answering the card as Rigger answers any card in its column. The bound runs only while that run holds no claim on the card, admission is open and a slot is free. | the engine | the test suite | |
-| R-SCHED-58 | In a `rigger run` with no clock trigger declared, Rigger acts on the owner's answer to an escalation of a card at the run's first pull begun after the owner removes the label with admission open and a slot free. Acting on it is as `R-SCHED-57` defines it. Where the run begins no such pull, the first such pull of the next invocation acts on it. | the engine | the test suite | |
+| R-SCHED-63 | While a declared clock trigger keeps `rigger run` up, that run skips each card it has set aside, and never claims a skipped card. A run sets a card aside when, having claimed it, it leaves it out of its later pulls. The skip ends when a read of the board that Rigger begins after setting the card aside finds the card in a column other than the one Rigger last knew it in. That column is the one Rigger read when it claimed the card, as changed by each of the run's own column changes of it that the board accepted. A read begun after setting the card aside that finds it in Ready ends the skip where the column Rigger last knew it in is another. The skip of a card the run set aside on escalating it also ends when a read begun after the owner answered that escalation finds the escalation label gone. A column change undone before Rigger next reads the board can go unseen, and the card then stays skipped. | the engine | the test suite | |
+| R-SCHED-64 | While a declared clock trigger keeps `rigger run` up, Rigger acts on the owner's answer to an escalation of a card no later than `R-SCHED-29`'s bound, counted from the owner's removal of the label. Acting on it is answering the card as Rigger answers any card in its column. The bound runs only while that run holds no claim on the card, admission is open and a slot is free. | the engine | the test suite | |
+| R-SCHED-65 | In a `rigger run` with no clock trigger declared, Rigger acts on the owner's answer to an escalation of a card at the run's first pull begun after the owner removes the label with admission open and a slot free. Acting on it is as `R-SCHED-64` defines it. Where the run begins no such pull, the first such pull of the next invocation acts on it. | the engine | the test suite | |
 
 ### R-SCHED-23 — The status issue and admission
 
@@ -469,7 +469,7 @@ Each row is a card in the owner's column or in Ready, whose latest escalation th
 | the line, at a head no pull request from it holds | none | in: continued from the line as the forge holds it; the maker opens a pull request from it |
 | the line, at a head no pull request from it holds | closed without merging, none open or merged | in: continued from the line as the forge holds it; the maker opens a pull request from it |
 | any | closed without merging, with directories `R-WORK-56` has not yet removed | in: removed first, under `R-WORK-56` |
-| any | one open | out: judged and continued as any card with an open pull request, under `R-LOOP-30` and `R-ESCALATE-32` |
+| any | one open | out: judged and continued as any card with an open pull request, under `R-LOOP-30` and `R-ESCALATE-34` |
 | any | two or more open | in: refused and escalated under `R-ESCALATE-12`, naming each |
 | any | one merged | out: `R-WORK-35` |
 | a read of the line of work, or of its pull requests, that fails | — | in: no maker dispatched; Rigger names the card and the read, and reads again at a later pull |
@@ -670,11 +670,11 @@ Each row is a card in the owner's column or in Ready, whose latest escalation th
 | R-ESCALATE-25 | — the role exits non-zero; | the engine | the test suite | D26 |
 | R-ESCALATE-26 | — the role's dispatch fails to start twice. A role's dispatch that fails to start never closes admission. | the engine | the test suite | D26 |
 | R-ESCALATE-27 | A maker, or a role an escalation goes to, that Rigger dispatches, on any provider Rigger ships and on each host Rigger supports, can write the escalation note its instruction asks for, under the settings `rigger init` gives a consumer. | the engine | the test suite | D26 |
-| R-ESCALATE-28 | Rigger reads the owner's answer to an escalation from the card's issue, and from nowhere else. The answer is each comment written there, from the escalation label's addition to its removal, by an account with write access to the repository. Its bound is in `### R-ESCALATE-28 — What an owner's answer holds`. | the engine | the test suite | D27 |
-| R-ESCALATE-29 | Every maker Rigger dispatches for a card after the owner answers an escalation of it is given each escalation of the card that the owner has answered, oldest first. Each comes with its category, its reason and the owner's answer to it. Where that answer holds no comment, the maker is given that the owner answered by removing the label alone. | the engine | the event record, by what each dispatch carried | D27 |
-| R-ESCALATE-30 | An owner's answer is no verdict and no change to the acceptance, and nothing the gate admits turns on it. An owner's verdict is no owner's answer, whether or not the card's kind names the owner as a judge. | the engine | the test suite | D35 |
-| R-ESCALATE-31 | Where Rigger cannot read the owner's answer to an escalation of a card, it dispatches no maker for the card. It names the card and the read that failed, and reads again at a later pull. That failure escalates nothing, and counts toward no hold. | the engine | the test suite | D3 |
-| R-ESCALATE-32 | Once the owner answers an escalation of a card, a verdict ruled before that answer that the work has a fault that must not merge escalates the card no further. Rigger dispatches the card's maker to continue the card, given that verdict, as for a verdict that the work needs revision. | the engine | the test suite | D3, D14 |
+| R-ESCALATE-30 | Rigger reads the owner's answer to an escalation from the card's issue, and from nowhere else. The answer is each comment written there, from the escalation label's addition to its removal, by an account with write access to the repository. Its bound is in `### R-ESCALATE-30 — What an owner's answer holds`. | the engine | the test suite | D27 |
+| R-ESCALATE-31 | Every maker Rigger dispatches for a card after the owner answers an escalation of it is given each escalation of the card that the owner has answered, oldest first. Each comes with its category, its reason and the owner's answer to it. Where that answer holds no comment, the maker is given that the owner answered by removing the label alone. | the engine | the event record, by what each dispatch carried | D27 |
+| R-ESCALATE-32 | An owner's answer is no verdict and no change to the acceptance, and nothing the gate admits turns on it. An owner's verdict is no owner's answer, whether or not the card's kind names the owner as a judge. | the engine | the test suite | D35 |
+| R-ESCALATE-33 | Where Rigger cannot read the owner's answer to an escalation of a card, it dispatches no maker for the card. It names the card and the read that failed, and reads again at a later pull. That failure escalates nothing, and counts toward no hold. | the engine | the test suite | D3 |
+| R-ESCALATE-34 | Once the owner answers an escalation of a card, a verdict ruled before that answer that the work has a fault that must not merge escalates the card no further. Rigger dispatches the card's maker to continue the card, given that verdict, as for a verdict that the work needs revision. | the engine | the test suite | D3, D14 |
 
 ### R-ESCALATE-9 — An escalation partly written
 
@@ -701,9 +701,9 @@ Each row is a card in the owner's column or in Ready, whose latest escalation th
 | a key that is no category | refused, naming the key | in |
 | `escalate` as a list of categories | refused, naming the key | in |
 
-### R-ESCALATE-28 — What an owner's answer holds
+### R-ESCALATE-30 — What an owner's answer holds
 
-Each row is a comment on the card's issue, unless it says otherwise. "Given" means given to a maker under `R-ESCALATE-29`.
+Each row is a comment on the card's issue, unless it says otherwise. "Given" means given to a maker under `R-ESCALATE-31`.
 
 | The comment | Scope |
 |---|---|
@@ -711,15 +711,15 @@ Each row is a comment on the card's issue, unless it says otherwise. "Given" mea
 | written before the label was added | in: no part of that answer |
 | written after the label's removal, whoever wrote it | in: no part of that answer |
 | written by an account without write access to the repository | in: no part of the answer |
-| written by a session holding the owner's token, rather than by the owner | in: part of the answer, since Rigger cannot tell it from the owner's; `R-ESCALATE-30` keeps the gate from turning on it |
+| written by a session holding the owner's token, rather than by the owner | in: part of the answer, since Rigger cannot tell it from the owner's; `R-ESCALATE-32` keeps the gate from turning on it |
 | an escalation note, or a comment Rigger posted for an escalation or for sending a card to a role | in: no part of the answer |
 | edited after it was written | in: given as the forge holds it when Rigger composes the dispatch's prompt; a dispatch already made keeps what it was given |
 | deleted before Rigger composes a dispatch's prompt | in: not given to that dispatch |
 | one of two or more comments in one answer | in: each given, oldest first |
 | none, the owner having only removed the label | in: the maker is given that the owner answered by removing the label alone |
-| a verdict the owner writes on the card's pull request | in: no part of the answer (`R-ESCALATE-30`) |
+| a verdict the owner writes on the card's pull request | in: no part of the answer (`R-ESCALATE-32`) |
 | a comment on the card's pull request rather than its issue | in: no part of the answer |
-| any, where Rigger cannot read the issue's comments, or when the label was added and removed | in: `R-ESCALATE-31` |
+| any, where Rigger cannot read the issue's comments, or when the label was added and removed | in: `R-ESCALATE-33` |
 | any, where a person added the label with no escalation Rigger raised | in: part of an answer, given with no category or reason |
 | any, on a card whose escalation went to a role | out: the card carries no label (`R-ESCALATE-23`), and `R-ESCALATE-18` says what the role is given |
 
